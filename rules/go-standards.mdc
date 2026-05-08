@@ -1,0 +1,165 @@
+---
+description: Go idioms for *.go files—packages, errors, interfaces, concurrency, types; open sibling markdown rules for depth.
+globs: "**/*.go"
+alwaysApply: false
+---
+# Go (hub rule)
+
+Prefer **explicit errors**, **synchronous APIs** unless concurrency is intrinsic, **small consumer-defined interfaces**, **concrete return types**, **`context.Context` as the first parameter** when cancellation/deadlines apply, and **feature-oriented packages** (`internal/` for unstable implementation).
+
+Tests: when editing `*_test.go`, follow **`go-testing.mdc`** alongside this rule.
+
+## When to open which detail file
+
+| Topic | File |
+|--------|------|
+| Layout, `cmd/`, `internal/`, naming | [go-project-structure.md](go-project-structure.md) |
+
+## Interface essentials
+
+- Define interfaces in the package that consumes the behavior; producers return concrete types.
+- Accept interfaces, return concrete types (easier API evolution and clearer contracts).
+- Prefer small, composable interfaces over kitchen-sink interfaces.
+- Do not introduce interfaces solely for mocking; first prefer testing concrete behavior and boundary fakes.
+- Avoid Java-style "IThing"/abstraction-first interface hierarchies; add interfaces when real consumer needs emerge.
+- Use comma-ok assertions (`v, ok := x.(T)`) unless panic-on-mismatch is intentional.
+- Interface satisfaction is implicit; optional compile-time check:
+  - `var _ io.Reader = (*MyReader)(nil)`
+
+## Error handling essentials
+
+- Treat errors as first-class return values; handle at call sites or wrap and return.
+- Prefer `fmt.Errorf("context: %w", err)` when callers need `errors.Is` / `errors.As`; use non-`%w` only when intentionally hiding internal details.
+- Never return a typed nil pointer as `error`:
+  - `(*MyError, nil)` in an interface is non-nil.
+  - Return literal `nil` when there is no error.
+
+## Concurrency essentials
+
+- Every goroutine needs a clear lifetime and shutdown path (`WaitGroup`, context cancellation, bounded worker pools).
+- Choose primitives by intent:
+  - Channels for ownership transfer, pipelines, and coordination.
+  - Mutexes for shared mutable state with short critical sections.
+- Put `context.Context` first in signatures when cancellation/deadlines apply; do not store it in long-lived structs.
+- Export synchronous APIs by default; let callers add concurrency.
+- Use directional channels (`chan<- T`, `<-chan T`) in function signatures.
+- Remember `select` without `default` blocks; with `default` it is non-blocking.
+
+## Decision tree
+
+### Pointer receiver?
+
+1. Mutates receiver → pointer  
+2. Holds `sync.Mutex` / sync primitives → pointer  
+3. Large hot receiver (measured) → pointer  
+4. Other methods already pointer → pointer (stay consistent)  
+5. Else → value for tiny immutable reads  
+
+### Error vs panic?
+
+1. Programmer bug → panic or invariant violation  
+2. Expected runtime failure (`os`, I/O, network) → **error**  
+3. `init` misconfiguration → panic sometimes acceptable  
+4. Default → **error**  
+
+### Goroutine?
+
+1. Caller can choose sync path → avoid forced goroutine  
+2. Background/aux work with clear lifetime → goroutine okay  
+3. Unclear shutdown → reconsider design  
+
+### Channel vs mutex?
+
+1. Passing work between goroutines → channel  
+2. Guarding shared mutable state → mutex (keep sections short)  
+3. Coordinating lifecycle → channels / `sync` primitives as appropriate  
+
+### New interface?
+
+1. Multiple real implementations appearing → maybe  
+2. “For testing only” alone → rarely—fake at boundary instead  
+3. Library exporting wide interfaces consumers did not ask for → avoid  
+4. Single concrete type forever → skip the interface  
+
+## Philosophy (cheat sheet)
+
+1. Explicit over implicit  
+2. Composition over inheritance  
+3. Simplicity over cleverness  
+4. Errors are values—handle deliberately  
+5. Synchronous defaults—caller adds concurrency  
+6. Interfaces belong where they are consumed  
+7. Zero values should be safe whenever practical  
+
+## Sources
+
+- [Effective Go](https://go.dev/doc/effective_go)  
+- [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)  
+- [Go module layout](https://go.dev/doc/modules/layout)  
+- [Go FAQ](https://go.dev/doc/faq)
+
+## Semantic pitfalls
+
+### Loop variable closure (legacy)
+
+Go **1.22+** fixes per-iteration vars in loops. For portability or scanning old code, capture explicitly:
+
+```go
+for _, v := range vals {
+    v := v
+    go func() { use(v) }()
+}
+```
+
+or pass `v` into the goroutine/function literal.
+
+### Modifying slice while ranging
+
+Avoid mutating the slice structure (length/backing growth) during `for … range slice` unless you deliberately range over a copy/snapshot taken first.
+
+### `defer` in loops
+
+Deferred calls run when the **surrounding function** returns—many defers inside a tight loop accumulate and delay cleanup. Prefer an inner helper with its own `{ … }`, call `defer` scoped to it, or `Close()` explicitly.
+
+```go
+for _, path := range paths {
+    func() {
+        f, err := os.Open(path)
+        if err != nil { return }
+        defer f.Close()
+        consume(f)
+    }()
+}
+```
+
+### Pointer to range variable
+
+`&v` where `v` is the iteration variable repeats the **same address**. Copy first: `v := v` or index into backing storage intentionally.
+
+### Map iteration order
+
+Key order during `range` over maps is **non-deterministic**—do not assert ordering. Collect and sort keys if order matters.
+
+### `append` visibility
+
+Receiving a slice by value lets you mutate existing indices but assigning the result of `append` inside the callee does not mutate the caller’s header unless the slice aliases and does not reallocate—or return `[]T` explicitly.
+
+### Assertions (comma-ok)
+
+Use `value, ok := x.(Concrete)` unless panic-on-mismatch is intentional.
+
+### Returning `error` typed nil pointers
+
+Returning a nil `*MyError` as `error` is still **non-nil** at the interface. Return literal `nil` when there is no failure.
+
+### Comparing slices/maps/funcs with `==`
+
+Compile-time restriction; use intentional equality logic.
+
+### Nil slice append
+
+Appending to `nil` slice is idiomatic in Go.
+
+### Large values in range
+
+`for _, v := range bigValues` copies `v` each iteration—use indexes or slices of pointers for huge structs.

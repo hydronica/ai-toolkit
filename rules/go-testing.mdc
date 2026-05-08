@@ -1,0 +1,71 @@
+---
+description: Table-driven Go tests, fakes at system boundaries, useful failures, parallelism, examples.
+globs: "**/*_test.go"
+alwaysApply: false
+---
+
+# Go testing
+
+Primary pattern: prefer clear tests for behavior. Use table-driven tests when they improve readability across many independent cases; avoid them for simple one-assert tests or when test cases depend on shared state.
+
+## Table-driven with `trial` (when it adds value)
+
+Use `github.com/hydronica/trial` when the package is already adopted and you have enough independent scenarios to justify a case table. Keep case names descriptive and each case isolated.
+
+```go
+func TestParseInt(t *testing.T) {
+    fn := func(in string) (int, error) {
+        return ParseInt(in)
+    }
+    cases := trial.Cases[string, int]{
+        "parses decimal input": {Input: "42", Expected: 42},
+        "rejects non-numeric": {
+            Input:       "x",
+            ExpectedErr: errors.New("invalid syntax"),
+        },
+    }
+    trial.New(fn, cases).SubTest(t)
+}
+```
+
+Skip table-driven structure when:
+- a test has only one straightforward setup + assertion
+- scenarios are stateful and order-dependent
+- subtests would hide intent more than they help
+
+For those cases, write direct tests with explicit setup and expectations.
+
+## Failure style
+
+Fail with context (`Function(inputs) got ... want ...`). Prefer `t.Fatalf`/`t.Errorf` and avoid assert-style testing helpers (`assert.Equal`, `require.NoError`, etc.) as a default pattern.
+
+## External dependencies: mock systems, not your code
+
+Do not create ad-hoc mocks for your own code paths just to hit branches. Instead, test observable behavior and isolate external boundaries with purpose-built tools:
+- SQL/database boundaries: `sqlmock`
+- HTTP client/server boundaries: `httpmock` (or `httptest` where appropriate)
+- time/filesystem/network: controllable boundary seams only where required
+
+Prefer minimal interfaces only when you truly need a seam for an external dependency.
+
+## Behavioral assertions
+
+Prefer outcomes you would document (return values, side effects observable through exported API). Avoid asserting private fields or call counters unless diagnosing a narrowly scoped concurrency contract.
+
+## Small interfaces where you must swap dependencies
+
+Declare **minimal interfaces** beside test helpers or production consumers so fakes remain tiny—see `go-standards.mdc` (Interface essentials).
+
+## Unexported helpers
+
+Default: validate through exported APIs. Reach `package foo` internals from `foo_test.go` only when it genuinely reduces brittle surface—accept some duplication over testing every helper.
+
+## Parallelism
+
+Call `t.Parallel()` or `trial.New(...).Parallel().SubTest(t)` only when suites are isolated—no mutable globals, env vars, clocks, filesystem races unless coordinated.
+
+## Examples
+
+Prefix `Example` functions with deterministic `// Output:` lines so `go test` verifies docs stay accurate.
+
+Further footguns (`defer` loops, closures): see `go-standards.mdc` (Semantic pitfalls).
