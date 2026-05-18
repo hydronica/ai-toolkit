@@ -12,8 +12,17 @@ A CLI tool to check your Cursor billing usage.
 
 ## Installation
 
+### Pre-built binaries
+
+Download the latest release for your platform from the [Releases](https://github.com/YOUR_USERNAME/AI-toolkit/releases) page.
+
+### From source
+
 ```bash
-go install .
+cd cuse
+make build    # builds to ../scripts/cuse
+# or
+go install .  # installs to $GOPATH/bin
 ```
 
 ## Usage
@@ -39,4 +48,5 @@ On-demand:       $0.00 spent
 
 ## Options
 
+- `-version` — Print version and exit
 - `-debug` — Print raw API responses for troubleshooting

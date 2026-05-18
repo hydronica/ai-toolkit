@@ -1,0 +1,16 @@
+version: 2
+builds:
+  - ldflags:
+      - -X main.version={{.Version}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: binary
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc

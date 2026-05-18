@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "cuse: %v\n", err)
@@ -20,8 +22,14 @@ func main() {
 }
 
 func run() error {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	debug := flag.Bool("debug", false, "print raw API responses")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		return nil
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
