@@ -7,6 +7,8 @@ readonly REMOTE_TARBALL_URL="https://codeload.github.com/hydronica/ai-toolkit/ta
 readonly RESOURCE_TYPES=("rules" "commands" "skills" "agents")
 readonly BIN_SOURCE_DIR="scripts"
 readonly BIN_TARGET="${HOME}/.cursor/${REPO_NAME}"
+readonly GITHUB_REPO="hydronica/ai-toolkit"
+readonly GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 
 usage() {
   cat <<'EOF'
@@ -29,6 +31,26 @@ die() {
 require_command() {
   local cmd="$1"
   command -v "${cmd}" >/dev/null 2>&1 || die "Missing required command: ${cmd}"
+}
+
+detect_platform() {
+  local os arch
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  arch="$(uname -m)"
+
+  case "${arch}" in
+    x86_64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) die "Unsupported architecture: ${arch}" ;;
+  esac
+
+  case "${os}" in
+    darwin|linux) ;;
+    mingw*|msys*|cygwin*) os="windows" ;;
+    *) die "Unsupported OS: ${os}" ;;
+  esac
+
+  echo "${os}_${arch}"
 }
 
 resolve_local_source_root() {
@@ -100,6 +122,42 @@ install_bin() {
   fi
 }
 
+ensure_cuse() {
+  local cuse_path="${BIN_TARGET}/cuse"
+  local platform latest_version local_version download_url asset_name
+
+  platform="$(detect_platform)"
+
+  # Fetch latest release info
+  local release_json
+  release_json="$(curl -fsSL "${GITHUB_API}")" || die "Failed to fetch release info"
+  latest_version="$(echo "${release_json}" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+
+  # Check local version
+  local_version=""
+  if [[ -x "${cuse_path}" ]]; then
+    local_version="$("${cuse_path}" -version 2>/dev/null || echo "")"
+  fi
+
+  # Compare versions (strip leading 'v' for comparison)
+  if [[ "${local_version}" == "${latest_version#v}" || "v${local_version}" == "${latest_version}" ]]; then
+    echo "cuse is up to date (${latest_version})"
+    return 0
+  fi
+
+  # Find download URL for this platform (strip 'v' prefix to match GoReleaser naming)
+  local version_number="${latest_version#v}"
+  asset_name="cuse_${version_number}_${platform}"
+  download_url="$(echo "${release_json}" | grep "browser_download_url.*${asset_name}" | head -1 | sed 's/.*"\(https[^"]*\)".*/\1/')"
+
+  [[ -n "${download_url}" ]] || die "No release found for platform: ${platform}"
+
+  echo "Downloading cuse ${latest_version} for ${platform}..."
+  curl -fsSL "${download_url}" -o "${cuse_path}" || die "Failed to download cuse"
+  chmod +x "${cuse_path}"
+  echo "Installed cuse ${latest_version} to ${cuse_path}"
+}
+
 main() {
   local requested_mode=""
   while (($# > 0)); do
@@ -157,6 +215,9 @@ main() {
   done
 
   install_bin "${source_root}" "${mode}"
+
+  # Ensure cuse binary is installed/updated
+  ensure_cuse
 
   if [[ -n "${temp_root}" ]]; then
     rm -rf "${temp_root}"

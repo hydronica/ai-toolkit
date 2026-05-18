@@ -8,6 +8,7 @@ Steps you must follow:
 
 Output format (exact structure):
 (fix|feature)[folder] [imperative overview — 8 words or fewer]
+
   * [brief bullet: what changed or why]
   * [add more bullets only if needed]
 

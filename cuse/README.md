@@ -14,7 +14,7 @@ A CLI tool to check your Cursor billing usage.
 
 ### Pre-built binaries
 
-Download the latest release for your platform from the [Releases](https://github.com/YOUR_USERNAME/AI-toolkit/releases) page.
+Download the latest release for your platform from the [Releases](https://github.com/hydronica/AI-toolkit/releases) page.
 
 ### From source
 

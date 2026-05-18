@@ -12,7 +12,6 @@ Organize tools for consumption via the install/uninstall scripts (Cursor integra
   skills/                   # Agent skill descriptions (e.g. SKILL.md-style)
   agents/                   # Agent definitions consumed by Cursor
   scripts/                  # Shell helpers (installed to ~/.cursor/ai-toolkit)
-  prompts/                  # Standalone prompt templates
 ```
 
 ## Installing the repo
