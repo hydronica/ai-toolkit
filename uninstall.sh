@@ -4,12 +4,14 @@ set -euo pipefail
 
 readonly REPO_NAME="ai-toolkit"
 readonly RESOURCE_TYPES=("rules" "commands" "skills" "agents")
+readonly BIN_TARGET="${HOME}/.cursor/${REPO_NAME}"
 
 usage() {
   cat <<'EOF'
 Usage: uninstall.sh
 
 Removes ${HOME}/.cursor/(rules|commands|skills|agents)/ai-toolkit
+Removes ${HOME}/.cursor/ai-toolkit (bin directory)
 EOF
 }
 
@@ -33,7 +35,10 @@ main() {
     rm -rf "${target}"
   done
 
+  rm -rf "${BIN_TARGET}"
+
   echo "Removed ${HOME}/.cursor/{rules,commands,skills,agents}/${REPO_NAME}."
+  echo "Removed ${BIN_TARGET}."
 }
 
 main "$@"

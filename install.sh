@@ -5,6 +5,8 @@ set -euo pipefail
 readonly REPO_NAME="ai-toolkit"
 readonly REMOTE_TARBALL_URL="https://codeload.github.com/hydronica/ai-toolkit/tar.gz/refs/heads/main"
 readonly RESOURCE_TYPES=("rules" "commands" "skills" "agents")
+readonly BIN_SOURCE_DIR="scripts"
+readonly BIN_TARGET="${HOME}/.cursor/${REPO_NAME}"
 
 usage() {
   cat <<'EOF'
@@ -15,6 +17,7 @@ Usage: install.sh [--link|--copy]
   -h, --help Show this help
 
 Installs to ${HOME}/.cursor/(rules|commands|skills|agents)/ai-toolkit/
+Installs scripts/ as a bin directory at ${HOME}/.cursor/ai-toolkit/
 EOF
 }
 
@@ -46,6 +49,7 @@ validate_source_root() {
   for resource in "${RESOURCE_TYPES[@]}"; do
     [[ -d "${source_root}/${resource}" ]] || die "Source missing directory: ${resource}"
   done
+  [[ -d "${source_root}/${BIN_SOURCE_DIR}" ]] || die "Source missing directory: ${BIN_SOURCE_DIR}"
 }
 
 fetch_remote_source_root() {
@@ -78,6 +82,21 @@ install_resource() {
     ln -s "${source_root}/${resource}" "${target}"
   else
     cp -R "${source_root}/${resource}" "${target}"
+  fi
+}
+
+install_bin() {
+  local source_root="$1"
+  local mode="$2"
+
+  mkdir -p "$(dirname "${BIN_TARGET}")"
+  rm -rf "${BIN_TARGET}"
+
+  if [[ "${mode}" == "link" ]]; then
+    ln -s "${source_root}/${BIN_SOURCE_DIR}" "${BIN_TARGET}"
+  else
+    cp -R "${source_root}/${BIN_SOURCE_DIR}" "${BIN_TARGET}"
+    find "${BIN_TARGET}" -type f -name '*.sh' -exec chmod +x {} +
   fi
 }
 
@@ -137,6 +156,8 @@ main() {
     install_resource "${resource}" "${source_root}" "${mode}"
   done
 
+  install_bin "${source_root}" "${mode}"
+
   if [[ -n "${temp_root}" ]]; then
     rm -rf "${temp_root}"
   fi
@@ -146,6 +167,10 @@ main() {
   else
     echo "Installed to ${HOME}/.cursor/{rules,commands,skills,agents}/${REPO_NAME} using ${mode} from ${source_kind}."
   fi
+  echo "Installed bin directory at ${BIN_TARGET} (from ${BIN_SOURCE_DIR}/)."
+  echo ""
+  echo "To run the bundled scripts from anywhere, add this to your shell config (e.g. ~/.zshrc or ~/.bashrc):"
+  echo "  export PATH=\"\${HOME}/.cursor/${REPO_NAME}:\${PATH}\""
 }
 
 main "$@"
