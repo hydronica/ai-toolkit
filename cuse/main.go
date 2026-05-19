@@ -101,17 +101,19 @@ func resolveEnvPath() string {
 	return ".env"
 }
 
+const periodDisplayLayout = "2006-01-02T15:04 MST"
+
 // printTable prints the billing usage report to stdout.
 func printTable(r *UsageResult) {
-	start := dash(r.PeriodStart)
-	end := dash(r.PeriodEnd)
-
 	fmt.Println("Cursor usage")
 	fmt.Println("-------------")
-	fmt.Printf("Billing period:  %s → %s\n", start, end)
+	fmt.Printf("Billing period:  %s → %s\n", formatPeriod(r.PeriodStart), formatPeriod(r.PeriodEnd))
+	if r.MembershipType != "" {
+		fmt.Printf("Plan:            %s\n", r.MembershipType)
+	}
 
 	line := "Total usage:"
-	if r.PeriodStart != "" && r.PeriodEnd != "" {
+	if !r.PeriodStart.IsZero() && !r.PeriodEnd.IsZero() {
 		periodPct, ok := periodElapsed(r.PeriodStart, r.PeriodEnd)
 		if ok {
 			line += fmt.Sprintf("     (period elapsed: %.1f%% — stay under this)", periodPct)
@@ -129,30 +131,45 @@ func printTable(r *UsageResult) {
 	} else {
 		fmt.Println("On-demand:       $0.00 spent")
 	}
+
+	if r.Team != nil {
+		fmt.Println()
+		printTeamUsage(r.Team)
+	}
 	fmt.Println()
 }
 
-func dash(s string) string {
-	if s == "" {
+func printTeamUsage(t *TeamUsageInfo) {
+	if !t.Enabled {
+		return
+	}
+	if t.Used > 0 {
+		fmt.Printf("Team usage:      $%.2f spent\n", t.Used/100)
+	} else {
+		fmt.Println("Team usage:      $0.00 spent")
+	}
+	if t.Limit != nil {
+		fmt.Printf("  Limit:         $%.2f\n", *t.Limit/100)
+	}
+	if t.Remaining != nil {
+		fmt.Printf("  Remaining:     $%.2f\n", *t.Remaining/100)
+	}
+}
+
+func formatPeriod(t time.Time) string {
+	if t.IsZero() {
 		return "—"
 	}
-	return s
+	return t.Local().Format(periodDisplayLayout)
 }
 
 // periodElapsed returns what percentage of the billing period has elapsed.
-func periodElapsed(start, end string) (float64, bool) {
-	const dateLayout = "2006-01-02"
-	startT, err1 := time.Parse(dateLayout, start)
-	endT, err2 := time.Parse(dateLayout, end)
-	if err1 != nil || err2 != nil {
-		return 0, false
-	}
-	total := endT.Sub(startT).Seconds()
+func periodElapsed(start, end time.Time) (float64, bool) {
+	total := end.Sub(start).Seconds()
 	if total <= 0 {
 		return 0, false
 	}
-	elapsed := time.Since(startT).Seconds()
+	elapsed := time.Since(start).Seconds()
 	pct := math.Min(100, math.Max(0, (elapsed/total)*100))
 	return pct, true
 }
-

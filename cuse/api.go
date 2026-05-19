@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,23 +22,35 @@ const (
 
 // UsageResult holds the billing data we show to the user.
 type UsageResult struct {
-	PeriodStart     string
-	PeriodEnd       string
-	TotalPercent    float64
-	AutoPercent     float64
-	APIPercent      float64
-	OnDemandEnabled bool
-	OnDemandUsed    float64 // cents
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	MembershipType   string
+	TotalPercent     float64
+	AutoPercent      float64
+	APIPercent       float64
+	OnDemandEnabled  bool
+	OnDemandUsed     float64 // cents
+	Team             *TeamUsageInfo
+}
+
+// TeamUsageInfo holds team-level on-demand spend from usage-summary.
+type TeamUsageInfo struct {
+	Enabled   bool
+	Used      float64 // cents
+	Limit     *float64
+	Remaining *float64
 }
 
 // usageSummaryResponse maps the fields we care about from /api/usage-summary.
 type usageSummaryResponse struct {
 	BillingCycleStart string `json:"billingCycleStart"`
 	BillingCycleEnd   string `json:"billingCycleEnd"`
+	MembershipType    string `json:"membershipType"`
 	// Error field present when the API rejects the cookie.
-	Error       string          `json:"error"`
-	Description string          `json:"description"`
+	Error           string          `json:"error"`
+	Description     string          `json:"description"`
 	IndividualUsage json.RawMessage `json:"individualUsage"`
+	TeamUsage       json.RawMessage `json:"teamUsage"`
 }
 
 // planUsage is nested inside individualUsage.plan.
@@ -62,19 +73,21 @@ type individualUsage struct {
 	OnDemand onDemandUsage `json:"onDemand"`
 }
 
-// invoiceResponse maps fields we care about from /api/dashboard/get-monthly-invoice.
-// Only used for billing period dates as a fallback.
-type invoiceResponse struct {
-	PeriodStart      string `json:"period_start"`
-	PeriodEnd        string `json:"period_end"`
-	Start            string `json:"start"`
-	End              string `json:"end"`
-	CurrentPeriodEnd string `json:"current_period_end"`
+// teamUsageBlock matches teamUsage when fields are at the top level.
+type teamUsageBlock struct {
+	Enabled   bool     `json:"enabled"`
+	Used      float64  `json:"used"`
+	Limit     *float64 `json:"limit"`
+	Remaining *float64 `json:"remaining"`
 }
 
-// fetchUsage calls the two Cursor dashboard API endpoints and returns a
-// combined UsageResult. It returns ErrAuthFailed (wrapped) when the cookie is
-// rejected by the API (HTTP 401 or an error field in the JSON body).
+type teamUsageWrapper struct {
+	OnDemand teamUsageBlock `json:"onDemand"`
+}
+
+// fetchUsage calls /api/usage-summary and returns a UsageResult.
+// It returns ErrAuthFailed (wrapped) when the cookie is rejected by the API
+// (HTTP 401 or an error field in the JSON body).
 func fetchUsage(ctx context.Context, cookie string, debug bool) (*UsageResult, error) {
 	cookie = normalizeCookie(cookie)
 
@@ -83,12 +96,7 @@ func fetchUsage(ctx context.Context, cookie string, debug bool) (*UsageResult, e
 		return nil, fmt.Errorf("fetching usage-summary: %w", err)
 	}
 
-	invoiceBody, err := doPost(ctx, cookie, baseURL+"/api/dashboard/get-monthly-invoice", debug)
-	if err != nil {
-		return nil, fmt.Errorf("fetching monthly-invoice: %w", err)
-	}
-
-	return parseUsage(usageBody, invoiceBody)
+	return parseUsage(usageBody)
 }
 
 // normalizeCookie ensures the value is prefixed with "WorkosCursorSessionToken=".
@@ -106,20 +114,14 @@ func doGet(ctx context.Context, cookie, url string, debug bool) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Cookie", cookie)
-	req.Header.Set("User-Agent", userAgent)
+	setRequestHeaders(req, cookie)
 	return executeRequest(req, debug)
 }
 
-func doPost(ctx context.Context, cookie, url string, debug bool) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString("{}"))
-	if err != nil {
-		return nil, err
-	}
+func setRequestHeaders(req *http.Request, cookie string) {
 	req.Header.Set("Cookie", cookie)
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Content-Type", "application/json")
-	return executeRequest(req, debug)
+	req.Header.Set("Accept", "application/json")
 }
 
 func executeRequest(req *http.Request, debug bool) ([]byte, error) {
@@ -138,7 +140,7 @@ func executeRequest(req *http.Request, debug bool) ([]byte, error) {
 		return nil, fmt.Errorf("reading body: %w", err)
 	}
 	if debug {
-		fmt.Printf("[debug] status %d body: %s\n", resp.StatusCode, body)
+		fmt.Printf("[debug] status %d body:\n %s\n", resp.StatusCode, body)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("HTTP 401: %w", ErrAuthFailed)
@@ -146,9 +148,9 @@ func executeRequest(req *http.Request, debug bool) ([]byte, error) {
 	return body, nil
 }
 
-// parseUsage combines the two API responses into a UsageResult.
-// Returns ErrAuthFailed if the usage-summary body contains an error field.
-func parseUsage(usageBody, invoiceBody []byte) (*UsageResult, error) {
+// parseUsage parses the usage-summary response into a UsageResult.
+// Returns ErrAuthFailed if the body contains an error field.
+func parseUsage(usageBody []byte) (*UsageResult, error) {
 	var summary usageSummaryResponse
 	if err := json.Unmarshal(usageBody, &summary); err != nil {
 		return nil, fmt.Errorf("parsing usage-summary: %w", err)
@@ -161,14 +163,13 @@ func parseUsage(usageBody, invoiceBody []byte) (*UsageResult, error) {
 		return nil, fmt.Errorf("API error %q: %w", msg, ErrAuthFailed)
 	}
 
-	var invoice invoiceResponse
-	_ = json.Unmarshal(invoiceBody, &invoice) // invoice failure is non-fatal
-
 	result := &UsageResult{}
-
-	// Period dates: prefer invoice, fall back to usage-summary.
-	result.PeriodStart = firstNonEmpty(invoice.PeriodStart, invoice.Start, summary.BillingCycleStart)
-	result.PeriodEnd = firstNonEmpty(invoice.PeriodEnd, invoice.End, invoice.CurrentPeriodEnd, summary.BillingCycleEnd)
+	result.PeriodStart, _ = parseAPITime(summary.BillingCycleStart)
+	result.PeriodEnd, _ = parseAPITime(summary.BillingCycleEnd)
+	result.MembershipType = summary.MembershipType
+	if tu, ok := parseTeamUsage(summary.TeamUsage); ok {
+		result.Team = &tu
+	}
 
 	if len(summary.IndividualUsage) > 0 {
 		var iu individualUsage
@@ -181,24 +182,50 @@ func parseUsage(usageBody, invoiceBody []byte) (*UsageResult, error) {
 		}
 	}
 
-	result.PeriodStart = stripTime(result.PeriodStart)
-	result.PeriodEnd = stripTime(result.PeriodEnd)
-
 	return result, nil
 }
 
-func stripTime(s string) string {
-	if i := strings.IndexByte(s, 'T'); i != -1 {
-		return s[:i]
+func parseAPITime(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
 	}
-	return s
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05.000Z", s)
+		if err != nil {
+			return time.Time{}, false
 		}
 	}
-	return ""
+	return t, true
+}
+
+func parseTeamUsage(raw json.RawMessage) (TeamUsageInfo, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return TeamUsageInfo{}, false
+	}
+	var flat teamUsageBlock
+	if err := json.Unmarshal(raw, &flat); err == nil {
+		if info, ok := teamUsageFromBlock(flat); ok {
+			return info, true
+		}
+	}
+	var nested teamUsageWrapper
+	if err := json.Unmarshal(raw, &nested); err == nil {
+		if info, ok := teamUsageFromBlock(nested.OnDemand); ok {
+			return info, true
+		}
+	}
+	return TeamUsageInfo{}, false
+}
+
+func teamUsageFromBlock(b teamUsageBlock) (TeamUsageInfo, bool) {
+	if !b.Enabled && b.Used == 0 && b.Limit == nil && b.Remaining == nil {
+		return TeamUsageInfo{}, false
+	}
+	return TeamUsageInfo{
+		Enabled:   b.Enabled,
+		Used:      b.Used,
+		Limit:     b.Limit,
+		Remaining: b.Remaining,
+	}, true
 }
