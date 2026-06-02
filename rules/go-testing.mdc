@@ -6,6 +6,15 @@ alwaysApply: false
 
 # Go testing
 
+For **bug fixes and regressions**, invoke `@red-green-bug-fix` (replication contract → RED → GREEN) before adding or changing tests here.
+
+## Regression anchors
+
+- Name subtests or `trial` cases with issue ID and symptom: `issue #1234: returns 422 for duplicate email`.
+- Run focused package tests: `go test -run '1234' -v ./path/to/package`.
+- Prefer one case per regression unless several share setup; use direct `t.Run` when a single scenario suffices.
+- If automation is blocked, `t.Skip` with issue ID, contract summary, and why (manual steps still required in PR).
+
 Primary pattern: prefer clear tests for behavior. Use table-driven tests when they improve readability across many independent cases; avoid them for simple one-assert tests or when test cases depend on shared state.
 
 ## Table-driven with `trial` (when it adds value)
