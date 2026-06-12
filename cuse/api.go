@@ -28,6 +28,8 @@ type UsageResult struct {
 	TotalPercent     float64
 	AutoPercent      float64
 	APIPercent       float64
+	RequestsUsed     float64
+	RequestsLimit    float64
 	OnDemandEnabled  bool
 	OnDemandUsed     float64 // cents
 	Team             *TeamUsageInfo
@@ -164,8 +166,8 @@ func parseUsage(usageBody []byte) (*UsageResult, error) {
 	}
 
 	result := &UsageResult{}
-	result.PeriodStart, _ = parseAPITime(summary.BillingCycleStart)
-	result.PeriodEnd, _ = parseAPITime(summary.BillingCycleEnd)
+	result.PeriodStart = parseAPITime(summary.BillingCycleStart)
+	result.PeriodEnd = parseAPITime(summary.BillingCycleEnd)
 	result.MembershipType = summary.MembershipType
 	if tu, ok := parseTeamUsage(summary.TeamUsage); ok {
 		result.Team = &tu
@@ -177,6 +179,8 @@ func parseUsage(usageBody []byte) (*UsageResult, error) {
 			result.TotalPercent = iu.Plan.TotalPercentUsed
 			result.AutoPercent = iu.Plan.AutoPercentUsed
 			result.APIPercent = iu.Plan.APIPercentUsed
+			result.RequestsUsed = iu.Plan.Used
+			result.RequestsLimit = iu.Plan.Limit
 			result.OnDemandEnabled = iu.OnDemand.Enabled
 			result.OnDemandUsed = iu.OnDemand.Used
 		}
@@ -185,18 +189,18 @@ func parseUsage(usageBody []byte) (*UsageResult, error) {
 	return result, nil
 }
 
-func parseAPITime(s string) (time.Time, bool) {
+func parseAPITime(s string) time.Time {
 	if s == "" {
-		return time.Time{}, false
+		return time.Time{}
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
 		t, err = time.Parse("2006-01-02T15:04:05.000Z", s)
 		if err != nil {
-			return time.Time{}, false
+			return time.Time{}
 		}
 	}
-	return t, true
+	return t
 }
 
 func parseTeamUsage(raw json.RawMessage) (TeamUsageInfo, bool) {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -112,14 +113,16 @@ func printTable(r *UsageResult) {
 	fmt.Println(line)
 	fmt.Printf("  API (named):   %.1f%%\n", r.APIPercent)
 	fmt.Printf("  Auto:          %.1f%%\n", r.AutoPercent)
+	if r.RequestsLimit > 0 {
+		pct := requestPercent(r.RequestsUsed, r.RequestsLimit)
+		fmt.Printf("  Requests:      %.1f%% (%.0f/%.0f)\n", pct, r.RequestsUsed, r.RequestsLimit)
+	}
 
 	fmt.Println()
 	if !r.OnDemandEnabled {
 		fmt.Println("On-demand:       Disabled")
-	} else if r.OnDemandUsed > 0 {
-		fmt.Printf("On-demand:       $%.2f spent\n", r.OnDemandUsed/100)
 	} else {
-		fmt.Println("On-demand:       $0.00 spent")
+		fmt.Printf("On-demand:       %s spent\n", formatDollars(r.OnDemandUsed))
 	}
 
 	if r.Team != nil {
@@ -133,16 +136,12 @@ func printTeamUsage(t *TeamUsageInfo) {
 	if !t.Enabled {
 		return
 	}
-	if t.Used > 0 {
-		fmt.Printf("Team usage:      $%.2f spent\n", t.Used/100)
-	} else {
-		fmt.Println("Team usage:      $0.00 spent")
-	}
+	fmt.Printf("Team usage:      %s spent\n", formatDollars(t.Used))
 	if t.Limit != nil {
-		fmt.Printf("  Limit:         $%.2f\n", *t.Limit/100)
+		fmt.Printf("  Limit:         %s\n", formatDollars(*t.Limit))
 	}
 	if t.Remaining != nil {
-		fmt.Printf("  Remaining:     $%.2f\n", *t.Remaining/100)
+		fmt.Printf("  Remaining:     %s\n", formatDollars(*t.Remaining))
 	}
 }
 
@@ -222,4 +221,48 @@ func formatTimeRemaining(remaining time.Duration) string {
 		return fmt.Sprintf("1 hr %d min", mins)
 	}
 	return fmt.Sprintf("%d hr %d min", hrs, mins)
+}
+
+// requestPercent returns used/limit as a percentage without capping at 100.
+func requestPercent(used, limit float64) float64 {
+	if limit <= 0 {
+		return 0
+	}
+	return (used / limit) * 100
+}
+
+// formatDollars formats a cent amount as a dollar string with thousands separators.
+func formatDollars(cents float64) string {
+	negative := cents < 0
+	if negative {
+		cents = -cents
+	}
+	rounded := int64(math.Round(cents))
+	dollars := rounded / 100
+	remainder := rounded % 100
+	s := fmt.Sprintf("$%s.%02d", formatWithCommas(dollars), remainder)
+	if negative {
+		return "-" + s
+	}
+	return s
+}
+
+// formatWithCommas formats an integer with thousands separators.
+func formatWithCommas(n int64) string {
+	if n < 0 {
+		return "-" + formatWithCommas(-n)
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var parts []string
+	for len(s) > 3 {
+		parts = append([]string{s[len(s)-3:]}, parts...)
+		s = s[:len(s)-3]
+	}
+	if s != "" {
+		parts = append([]string{s}, parts...)
+	}
+	return strings.Join(parts, ",")
 }

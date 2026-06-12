@@ -7,6 +7,7 @@ A CLI tool to check your Cursor billing usage.
 - Current billing period dates
 - API (named model) usage percentage
 - Auto-complete usage percentage
+- Request usage (used/limit and percentage)
 - Percentage of billing period elapsed (to help pace usage)
 - On-demand spending (if enabled)
 
@@ -39,11 +40,12 @@ Example output:
 Cursor usage
 -------------
 Billing period:  2026-05-01 → 2026-06-01
-Total usage:     (period elapsed: 58.1% — stay under this)
+Total usage:     (Tip: keep usage below elapsed %)
   API (named):   42.3%
   Auto:          15.7%
+  Requests:      56.2% (1124/2000)
 
-On-demand:       $0.00 spent
+On-demand:       $2,000.00 spent
 ```
 
 ## Options
