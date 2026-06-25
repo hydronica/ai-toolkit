@@ -54,6 +54,7 @@ You can also add rules **per project** from a GitHub repo through the Cursor UI:
 ## Using assets with Cursor
 
 - **User-level install:** After `install.sh`, rules and related assets live under `~/.cursor/{rules,commands,skills,agents}/ai-toolkit`, with scripts at `~/.cursor/ai-toolkit`, as configured above.
+- **Rule attribution:** `rules/rule-attribution.mdc` is always on after install; the agent ends file-editing turns with a **Rules applied** table listing which ai-toolkit rules governed the changes.
 - **Go rules:** `rules/go-standards.mdc` (hub for `*.go`) and `rules/go-testing.mdc` (`*_test.go`), with topic-specific `rules/go-*.md` companions for deeper reference.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke **`@red-green-bug-fix`** (not auto-attached).
 - **Project rules:** You can also place rule files under a project’s `.cursor/rules/`. Prefer `.mdc` with frontmatter when you need `description`, `globs`, or `alwaysApply`. See [Rule anatomy](https://cursor.com/docs/rules#rule-anatomy).

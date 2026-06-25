@@ -1,0 +1,20 @@
+---
+alwaysApply: true
+---
+
+# Rule attribution
+
+After creating or modifying files, end your response with **Rules applied** (last section). Skip when no files changed.
+
+List ai-toolkit `rules/` filenames you followed: infer from each rule’s frontmatter **globs**, cross-references in rule bodies (e.g. hub rules citing companions), and any `@`-mentioned rules. If none: `None (ai-toolkit rules)`.
+
+```markdown
+## Rules applied
+
+| File | Rules |
+|------|-------|
+| `path/to/file.go` | `go-standards.mdc` |
+| `path/to/file_test.go` | `go-standards.mdc`, `go-testing.mdc` |
+```
+
+One row per changed file; alphabetize rules; collapse paths that share the same set.

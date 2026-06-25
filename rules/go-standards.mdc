@@ -1,5 +1,5 @@
 ---
-description: Go idioms for *.go files—packages, errors, interfaces, concurrency, types; open sibling markdown rules for depth.
+description: Go idioms for *.go files—packages, errors, control flow, return values, interfaces, concurrency, types; open sibling markdown rules for depth.
 globs: "**/*.go"
 alwaysApply: false
 ---
@@ -33,6 +33,21 @@ Tests: when editing `*_test.go`, follow **`go-testing.mdc`** alongside this rule
 - Never return a typed nil pointer as `error`:
   - `(*MyError, nil)` in an interface is non-nil.
   - Return literal `nil` when there is no error.
+
+## Function design essentials
+
+### Control flow
+
+- Keep nesting shallow; deep `if`/`else` chains are hard to read and not idiomatic Go.
+- Prefer early returns and guard clauses: handle errors and edge cases first, then the happy path at minimal indentation.
+- When logic branches repeatedly, extract a helper or `switch` on a discriminant instead of stacking `else if`.
+
+### Return values
+
+- Default shape: one primary value plus an optional `error` (e.g. `(T, error)` or `error` alone).
+- Two or three return values are fine when callers routinely need them (e.g. `(value, ok)`, `(n, err)`).
+- Beyond three values—or when the same bundle of fields is returned from multiple functions—prefer a named result struct with concrete fields.
+- Name result structs for their role (`FetchUserResult`, `ParseOutput`), not generic `Result`.
 
 ## Concurrency essentials
 
