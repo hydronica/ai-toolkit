@@ -63,6 +63,37 @@ func TestFormatDollars(t *testing.T) {
 	}
 }
 
+func TestRequestUsed(t *testing.T) {
+	tests := []struct {
+		name string
+		r    *UsageResult
+		want float64
+	}{
+		{
+			name: "fallback to plan used",
+			r:    &UsageResult{RequestsUsed: 1124, RequestsLimit: 2000},
+			want: 1124,
+		},
+		{
+			name: "uses breakdown total",
+			r: &UsageResult{
+				RequestsUsed:           2000,
+				RequestsLimit:          2000,
+				RequestsBreakdownTotal: floatPtr(2386),
+			},
+			want: 2386,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := requestUsed(tt.r); got != tt.want {
+				t.Fatalf("requestUsed() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRequestPercent(t *testing.T) {
 	tests := []struct {
 		used, limit float64
@@ -230,7 +261,52 @@ Team usage:      $500.00 spent
 `,
 		},
 		{
-			name: "free_plan_individual_usage_false",
+			name: "breakdown_total_for_requests",
+			body: `{
+				"membershipType": "pro",
+				"individualUsage": {
+					"plan": {
+						"used": 2000,
+						"limit": 2000,
+						"breakdown": {
+							"included": 2000,
+							"bonus": 386,
+							"total": 2386
+						},
+						"autoPercentUsed": 0,
+						"apiPercentUsed": 53.02,
+						"totalPercentUsed": 12.24
+					},
+					"onDemand": {
+						"enabled": false,
+						"used": 0
+					}
+				}
+			}`,
+			want: &UsageResult{
+				MembershipType:         "pro",
+				TotalPercent:           12.24,
+				AutoPercent:            0,
+				APIPercent:             53.02,
+				RequestsUsed:           2000,
+				RequestsLimit:          2000,
+				RequestsBreakdownTotal: floatPtr(2386),
+				OnDemandEnabled:        false,
+			},
+			wantOutput: `Cursor usage
+-------------
+Billing period:  — → —
+Plan:            pro
+Total usage:
+  API (named):   53.0%
+  Auto:          0.0%
+  Requests:      119.3% (2386/2000)
+
+On-demand:       Disabled
+
+`,
+		},
+		{
 			body: `{
 				"membershipType": "free",
 				"individualUsage": false

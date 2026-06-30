@@ -28,8 +28,9 @@ type UsageResult struct {
 	TotalPercent     float64
 	AutoPercent      float64
 	APIPercent       float64
-	RequestsUsed     float64
-	RequestsLimit    float64
+	RequestsUsed             float64
+	RequestsLimit            float64
+	RequestsBreakdownTotal   *float64 // when set, used for request % instead of RequestsUsed
 	OnDemandEnabled  bool
 	OnDemandUsed     float64 // cents
 	Team             *TeamUsageInfo
@@ -55,14 +56,21 @@ type usageSummaryResponse struct {
 	TeamUsage       json.RawMessage `json:"teamUsage"`
 }
 
+type usageBreakdown struct {
+	Included float64 `json:"included"`
+	Bonus    float64 `json:"bonus"`
+	Total    float64 `json:"total"`
+}
+
 // planUsage is nested inside individualUsage.plan.
 type planUsage struct {
-	Used             float64 `json:"used"`
-	Limit            float64 `json:"limit"`
-	Remaining        float64 `json:"remaining"`
-	AutoPercentUsed  float64 `json:"autoPercentUsed"`
-	APIPercentUsed   float64 `json:"apiPercentUsed"`
-	TotalPercentUsed float64 `json:"totalPercentUsed"`
+	Used             float64         `json:"used"`
+	Limit            float64         `json:"limit"`
+	Remaining        float64         `json:"remaining"`
+	Breakdown        *usageBreakdown `json:"breakdown"`
+	AutoPercentUsed  float64         `json:"autoPercentUsed"`
+	APIPercentUsed   float64         `json:"apiPercentUsed"`
+	TotalPercentUsed float64         `json:"totalPercentUsed"`
 }
 
 type onDemandUsage struct {
@@ -181,6 +189,10 @@ func parseUsage(usageBody []byte) (*UsageResult, error) {
 			result.APIPercent = iu.Plan.APIPercentUsed
 			result.RequestsUsed = iu.Plan.Used
 			result.RequestsLimit = iu.Plan.Limit
+			if iu.Plan.Breakdown != nil {
+				total := iu.Plan.Breakdown.Total
+				result.RequestsBreakdownTotal = &total
+			}
 			result.OnDemandEnabled = iu.OnDemand.Enabled
 			result.OnDemandUsed = iu.OnDemand.Used
 		}

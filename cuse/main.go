@@ -114,8 +114,9 @@ func printTable(r *UsageResult) {
 	fmt.Printf("  API (named):   %.1f%%\n", r.APIPercent)
 	fmt.Printf("  Auto:          %.1f%%\n", r.AutoPercent)
 	if r.RequestsLimit > 0 {
-		pct := requestPercent(r.RequestsUsed, r.RequestsLimit)
-		fmt.Printf("  Requests:      %.1f%% (%.0f/%.0f)\n", pct, r.RequestsUsed, r.RequestsLimit)
+		used := requestUsed(r)
+		pct := requestPercent(used, r.RequestsLimit)
+		fmt.Printf("  Requests:      %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
 	}
 
 	fmt.Println()
@@ -221,6 +222,14 @@ func formatTimeRemaining(remaining time.Duration) string {
 		return fmt.Sprintf("1 hr %d min", mins)
 	}
 	return fmt.Sprintf("%d hr %d min", hrs, mins)
+}
+
+// requestUsed returns breakdown.total when present, otherwise plan.used.
+func requestUsed(r *UsageResult) float64 {
+	if r.RequestsBreakdownTotal != nil {
+		return *r.RequestsBreakdownTotal
+	}
+	return r.RequestsUsed
 }
 
 // requestPercent returns used/limit as a percentage without capping at 100.
