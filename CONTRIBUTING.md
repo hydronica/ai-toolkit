@@ -4,7 +4,7 @@ This document is for **human contributors** and for **AI assistants** asked to a
 
 Canonical product behavior for Cursor rules is described in the [Cursor Rules documentation](https://cursor.com/docs/rules). When writing rules, follow [Best practices](https://cursor.com/docs/rules#best-practices): short, actionable, scoped, composable, and reference real files instead of pasting large guides.
 
-**Consumers:** To wire `rules/` into a project using Cursor’s imported-rules layout, run [`install.sh`](install.sh) (see [readme.md](readme.md)); do not copy rule files by hand unless you have a one-off exception.
+**Consumers:** To wire `rules/` into a project, run [`scripts/install-rules.sh`](scripts/install-rules.sh) or use the **`install_rules`** command (see [readme.md](readme.md) and [Docs.md](Docs.md)); do not copy rule files by hand unless you have a one-off exception.
 
 ## Human workflow
 
@@ -41,6 +41,17 @@ Behavior is controlled by `alwaysApply`, `description`, and `globs` as described
 - Prefer **narrow globs** over `alwaysApply: true` unless the rule truly applies to every conversation.
 - Write **`description`** like a precise product requirement: what situation triggers this rule.
 - Keep the rule body **under a few hundred lines**; split into multiple rules if it grows.
+
+### Adding a language stack (`rules/manifest.sh`)
+
+When you add rules for a new language or toolchain:
+
+1. Add `.mdc` (and optional companion `.md`) files under `rules/`.
+2. Edit [`rules/manifest.sh`](rules/manifest.sh):
+   - Append the stack name to `STACK_NAMES`.
+   - Define `STACK_<name>_DETECT=(…)` — project markers (e.g. `go.mod`).
+   - Define `STACK_<name>_RULES=(…)` — rule filenames to install with that stack.
+3. Org-wide rules belong in `ORG_RULES` only.
 
 ### Example: file-scoped rule
 

@@ -22,41 +22,47 @@ clone and run `install.sh` or
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/install.sh)"
 ```
 
-[`install.sh`](install.sh) installs toolkit assets **globally under your Cursor home layout** — one target per asset type:
+[`install.sh`](install.sh) installs toolkit assets **globally under your Cursor home layout**:
 
-- `${HOME}/.cursor/rules/ai-toolkit`
 - `${HOME}/.cursor/commands/ai-toolkit`
 - `${HOME}/.cursor/skills/ai-toolkit`
 - `${HOME}/.cursor/agents/ai-toolkit`
-- `${HOME}/.cursor/ai-toolkit` — executable helpers from this repo’s `scripts/` (e.g. `pr_sum.sh`). Add that directory to `PATH` if you want to run them by name; see the post-install hint from `install.sh`.
+- `${HOME}/.cursor/ai-toolkit` — executable helpers from this repo’s `scripts/` (e.g. `install-rules.sh`, `pr_sum.sh`). Add that directory to `PATH` if you want to run them by name; see the post-install hint from `install.sh`.
 
 `install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode.
 
 Each run replaces the existing `ai-toolkit` entry under each category and the bin directory (`rm -rf` then link or copy). Online installs need `curl` and `tar`.
 
+**Rules are not installed globally** — Cursor does not reliably load user-level rule files. Install rules per project instead (see below).
+
 ### uninstall 
 
-[`uninstall.sh`](uninstall.sh) removes those paths and `${HOME}/.cursor/ai-toolkit` (whether each is a symlink or a copied directory).
+[`uninstall.sh`](uninstall.sh) removes those paths and `${HOME}/.cursor/ai-toolkit` (whether each is a symlink or a copied directory). Project-level rules under `.cursor/rules/ai-toolkit/` in your repos are not removed.
 
 ```
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/uninstall.sh)"
 ```
 
-### Importing rules inside Cursor (alternative)
+### Installing rules in a project
 
-You can also add rules **per project** from a GitHub repo through the Cursor UI: **Cursor Settings → Rules, Commands** and use **Remote rule (GitHub)**. Cursor syncs `.mdc` files into `.cursor/rules/imported/<repoName>/` as described in [Importing rules](https://cursor.com/docs/rules#importing-rules). That path is separate from the user-level `~/.cursor/rules/ai-toolkit` layout used by `install.sh`.
+Rules must live in each project’s `.cursor/rules/` tree. Use one of:
+
+- **Command:** invoke **`install_rules`** in Agent chat (see [`commands/install_rules.md`](commands/install_rules.md)).
+- **Script:** `~/.cursor/ai-toolkit/install-rules.sh --filter auto` from the project directory (detects stacks from [`rules/manifest.sh`](rules/manifest.sh)).
+- **Cursor UI:** **Settings → Rules → Remote rule (GitHub)** syncs into `.cursor/rules/imported/<repoName>/` ([Importing rules](https://cursor.com/docs/rules#importing-rules)).
+
+See [`Docs.md`](Docs.md) for Cursor rule discovery limits and troubleshooting.
 
 ### Troubleshooting
 
 - **`Operation not permitted` or symlink errors:** Run with `--copy`, or enable symlink support (e.g. Windows Developer Mode).
-- **Missing directories / download errors:** The remote tarball must contain `rules`, `commands`, `skills`, `agents`, and `scripts`; a sparse upstream repo will fail validation until those folders exist.
+- **Missing directories / download errors:** The remote tarball must contain `commands`, `skills`, `agents`, and `scripts`; a sparse upstream repo will fail validation until those folders exist.
 
 ## Using assets with Cursor
 
-- **User-level install:** After `install.sh`, rules and related assets live under `~/.cursor/{rules,commands,skills,agents}/ai-toolkit`, with scripts at `~/.cursor/ai-toolkit`, as configured above.
-- **Rule attribution:** `rules/rule-attribution.mdc` is always on after install; the agent ends file-editing turns with a **Rules applied** table listing which ai-toolkit rules governed the changes.
-- **Go rules:** `rules/go-standards.mdc` (hub for `*.go`) and `rules/go-testing.mdc` (`*_test.go`), with topic-specific `rules/go-*.md` companions for deeper reference.
+- **User-level install:** After `install.sh`, commands, skills, and agents live under `~/.cursor/{commands,skills,agents}/ai-toolkit`, with scripts at `~/.cursor/ai-toolkit`.
+- **Project rules:** Run `install-rules.sh` or the **`install_rules`** command to link filtered rules into `<project>/.cursor/rules/ai-toolkit/`. Org rules (e.g. `rule-attribution.mdc`) always install; language stacks (Go, etc.) are selected by `--filter auto` or explicitly.
+- **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke **`@red-green-bug-fix`** (not auto-attached).
-- **Project rules:** You can also place rule files under a project’s `.cursor/rules/`. Prefer `.mdc` with frontmatter when you need `description`, `globs`, or `alwaysApply`. See [Rule anatomy](https://cursor.com/docs/rules#rule-anatomy).
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
 - **Precedence:** If you use Team Rules, remember order is **Team → Project → User** when guidance conflicts. See [Team Rules](https://cursor.com/docs/rules#team-rules).

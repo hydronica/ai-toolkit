@@ -4,7 +4,7 @@ set -euo pipefail
 
 readonly REPO_NAME="ai-toolkit"
 readonly REMOTE_TARBALL_URL="https://codeload.github.com/hydronica/ai-toolkit/tar.gz/refs/heads/main"
-readonly RESOURCE_TYPES=("rules" "commands" "skills" "agents")
+readonly RESOURCE_TYPES=("commands" "skills" "agents")
 readonly BIN_SOURCE_DIR="scripts"
 readonly BIN_TARGET="${HOME}/.cursor/${REPO_NAME}"
 readonly GITHUB_REPO="hydronica/ai-toolkit"
@@ -18,8 +18,10 @@ Usage: install.sh [--link|--copy]
   --copy     Copy from local/online source
   -h, --help Show this help
 
-Installs to ${HOME}/.cursor/(rules|commands|skills|agents)/ai-toolkit/
+Installs to ${HOME}/.cursor/(commands|skills|agents)/ai-toolkit/
 Installs scripts/ as a bin directory at ${HOME}/.cursor/ai-toolkit/
+
+Project rules are installed separately — see scripts/install-rules.sh or the install_rules command.
 EOF
 }
 
@@ -224,9 +226,9 @@ main() {
   fi
 
   if [[ "${used_fallback}" == "true" ]]; then
-    echo "Installed to ${HOME}/.cursor/{rules,commands,skills,agents}/${REPO_NAME} using copy from online (fallback from --link)."
+    echo "Installed to ${HOME}/.cursor/{commands,skills,agents}/${REPO_NAME} using copy from online (fallback from --link)."
   else
-    echo "Installed to ${HOME}/.cursor/{rules,commands,skills,agents}/${REPO_NAME} using ${mode} from ${source_kind}."
+    echo "Installed to ${HOME}/.cursor/{commands,skills,agents}/${REPO_NAME} using ${mode} from ${source_kind}."
   fi
   echo "Installed bin directory at ${BIN_TARGET} (from ${BIN_SOURCE_DIR}/)."
   echo ""

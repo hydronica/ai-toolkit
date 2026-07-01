@@ -7,7 +7,7 @@ Steps you must follow:
 
 
 Output format (exact structure):
-<type>(<scope>): <imperative overview — 8 words or fewer>
+<scope>(<type>): <imperative overview — 8 words or fewer>
 
   * [brief bullet: what changed or why]
   * [add more bullets only if needed]

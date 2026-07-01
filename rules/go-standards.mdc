@@ -9,11 +9,7 @@ Prefer **explicit errors**, **synchronous APIs** unless concurrency is intrinsic
 
 Tests: when editing `*_test.go`, follow **`go-testing.mdc`** alongside this rule.
 
-## When to open which detail file
-
-| Topic | File |
-|--------|------|
-| Layout, `cmd/`, `internal/`, naming | [go-project-structure.md](go-project-structure.md) |
+Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorganizing module layout, **read `go-project-structure.md`** in this directory before changing structure.
 
 ## Interface essentials
 
