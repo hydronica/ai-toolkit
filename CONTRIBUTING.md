@@ -4,7 +4,9 @@ This document is for **human contributors** and for **AI assistants** asked to a
 
 Canonical product behavior for Cursor rules is described in the [Cursor Rules documentation](https://cursor.com/docs/rules). When writing rules, follow [Best practices](https://cursor.com/docs/rules#best-practices): short, actionable, scoped, composable, and reference real files instead of pasting large guides.
 
-**Consumers:** To wire `rules/` into a project, run [`scripts/install-rules.sh`](scripts/install-rules.sh) or use the **`install_rules`** command (see [readme.md](readme.md) and [Docs.md](Docs.md)); do not copy rule files by hand unless you have a one-off exception.
+**Consumers:** To wire `rules/` into a project, run [`scripts/install-rules.sh`](scripts/install-rules.sh) or use the **`install_rules`** command (see [README.md](README.md)); do not copy rule files by hand unless you have a one-off exception.
+
+For Cursor install paths, rule behavior, and known limitations, see [`docs/cursor.md`](docs/cursor.md). Use the [`docs/`](docs/) folder for additional platform-specific notes when authoring or troubleshooting assets.
 
 ## Human workflow
 
@@ -118,6 +120,7 @@ Use this as an explicit self-review:
 
 ## References
 
+- [Cursor setup and behavior](docs/cursor.md) — ai-toolkit notes on install paths, rules, and quirks
 - [Cursor Rules](https://cursor.com/docs/rules)
 - [Best practices](https://cursor.com/docs/rules#best-practices)
 - [AGENTS.md](https://cursor.com/docs/rules#agentsmd)

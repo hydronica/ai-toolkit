@@ -5,7 +5,6 @@
 # stacks:  STACK_NAMES plus STACK_<name>_DETECT and STACK_<name>_RULES per stack
 
 ORG_RULES=(
-  rule-attribution.mdc
 )
 
 STACK_NAMES=(go)

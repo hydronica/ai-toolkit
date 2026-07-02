@@ -1,10 +1,8 @@
-# AI-Toolkit documentation
+# Cursor setup and behavior
 
-Platform-specific notes for consuming assets from this repository.
+How Cursor discovers and loads ai-toolkit assets — install paths, rules (project vs user), known limitations, and troubleshooting. For official Cursor product docs, see [Cursor Rules](https://cursor.com/docs/rules).
 
-## Cursor
-
-### How asset types are discovered
+## How asset types are discovered
 
 `install.sh` installs commands, skills, agents, and scripts under your Cursor home directory:
 
@@ -19,7 +17,7 @@ Platform-specific notes for consuming assets from this repository.
 
 Skills and commands work globally after `install.sh`. **Project rules** are installed per repo with `install-rules.sh` or the **`install_rules`** command.
 
-### Where user rules are stored
+## Where user rules are stored
 
 Cursor’s **supported** user-rule path is **Settings → Rules → User Rules** (plain text in the UI). That content is **not** a normal file under `~/.cursor/rules/` and does **not** appear in **Customize → Rules** the way project `.mdc` rules do.
 
@@ -63,7 +61,7 @@ To find `<workspace-id>` for a folder, read `workspace.json` in each `workspaceS
 
 **Implication for ai-toolkit:** `install.sh` copies [`rules/user-ai-toolkit.txt`](rules/user-ai-toolkit.txt) to `~/.cursor/rules/user-ai-toolkit.txt` as a **versioned source-of-truth** for your team or repo. To activate in Cursor, paste (or merge) into **Settings → User Rules** on each account — or rely on cloud sync after the first paste. Cursor does not load the installed file as a rule on its own.
 
-### Where Cursor expects rules
+## Where Cursor expects rules
 
 Cursor supports three rule sources ([Rules docs](https://cursor.com/docs/rules)):
 
@@ -75,13 +73,7 @@ Cursor supports three rule sources ([Rules docs](https://cursor.com/docs/rules))
 
 **User-level file rules are not officially supported.** Cursor staff have confirmed that global loading of `.mdc` from `~/.cursor/rules` is [not supported yet](https://forum.cursor.com/t/user-rules-are-not-recognized-from-folder-cursor-rules/144739). Plain `.txt` or `.md` files in that directory are likewise **not** picked up. Use **Settings → User Rules** or project `.mdc` rules instead.
 
-### Installing ai-toolkit user rules
-
-`install.sh` copies or symlinks [`rules/user-ai-toolkit.txt`](rules/user-ai-toolkit.txt) to `~/.cursor/rules/user-ai-toolkit.txt`. Expand that file for org-wide preferences (e.g. rule attribution). `uninstall.sh` removes it.
-
-**To apply the content in Cursor today:** paste (or merge) from `~/.cursor/rules/user-ai-toolkit.txt` into **Settings → Rules → User Rules** on one machine. After that, cloud sync should propagate to other machines on the same account. The file install alone does not register a rule.
-
-### Installing ai-toolkit rules in a project
+## Installing ai-toolkit rules in a project
 
 **Recommended — script or command**
 
@@ -96,13 +88,13 @@ Cursor supports three rule sources ([Rules docs](https://cursor.com/docs/rules))
 ~/.cursor/ai-toolkit/install-rules.sh --filter auto --dry-run
 ```
 
-Or invoke the **`install_rules`** command in Agent chat ([`commands/install_rules.md`](commands/install_rules.md)).
+Or invoke the **`install_rules`** command in Agent chat ([`commands/install_rules.md`](../commands/install_rules.md)).
 
-Rules are installed to `<project>/.cursor/rules/ai-toolkit/`. Which files are included is controlled by [`rules/manifest.sh`](rules/manifest.sh):
+Rules are installed to `<project>/.cursor/rules/ai-toolkit/`. Which files are included is controlled by [`rules/manifest.sh`](../rules/manifest.sh):
 
 - **STACK_NAMES** plus **STACK_\<name\>_DETECT** and **STACK_\<name\>_RULES** per language pack
 
-Add new language packs by extending `manifest.sh` and adding rule files under `rules/`. User-level rules belong in `rules/user-ai-toolkit.txt` and are installed by `install.sh`, not `install-rules.sh`.
+Add new language packs by extending `manifest.sh` and adding rule files under `rules/`. User-level rules belong in [`rules/user-ai-toolkit.mdc`](../rules/user-ai-toolkit.mdc) (reference); paste into **Settings → User Rules** to apply.
 
 **Alternative — Remote rule (GitHub) import**
 
@@ -112,7 +104,7 @@ Cursor Settings → Rules → **Remote rule (GitHub)** syncs into `<project>/.cu
 
 Plain-text global preferences in **Settings → Rules → User Rules**. No `globs` or `alwaysApply`. **Body text is account-synced in the cloud**; local `state.vscdb` caches descriptors only (see [Where user rules are stored](#where-user-rules-are-stored)).
 
-### Rule file format
+## Rule file format
 
 - **`.mdc` only** — Project rules must use the `.mdc` extension with valid YAML frontmatter (`---` opening and closing markers). Plain `.md` files in `.cursor/rules/` are **ignored** by Cursor's rules system (no frontmatter to specify `description`, `globs`, or `alwaysApply`).
 - **Companion `.md` files** — Files such as `rules/go-project-structure.md` are reference material linked from hub `.mdc` rules; they are copied with the Go stack but are not loaded as rules on their own.
@@ -127,7 +119,7 @@ Frontmatter controls when a rule applies ([Rule anatomy](https://cursor.com/docs
 | `false` | set | — | Agent may include when description matches the task |
 | `false` | — | — | Manual `@`-mention only |
 
-### Known issues and quirks
+## Known issues and quirks
 
 **`~/.cursor/rules/` files (including ai-toolkit install)**
 
@@ -147,7 +139,7 @@ Frontmatter controls when a rule applies ([Rule anatomy](https://cursor.com/docs
 
 Team Rules → Project Rules → User Rules ([Team Rules](https://cursor.com/docs/rules#team-rules)).
 
-### Verifying rules are active
+## Verifying rules are active
 
 **Project rules** (under `<project>/.cursor/rules/ai-toolkit/`):
 
@@ -159,16 +151,12 @@ Team Rules → Project Rules → User Rules ([Team Rules](https://cursor.com/doc
 
 1. Confirm text in **Settings → Rules → User Rules** on each machine (or sign into the same Cursor account and wait for cloud sync).
 2. Optional: inspect workspace `state.vscdb` for a `scope: "user"` descriptor under `workbench.customize.primitiveSourceSnapshot.rules.v3` — confirms local UI cache only, not the full rule body.
-3. `~/.cursor/rules/user-ai-toolkit.txt` from `install.sh` is for **distribution** only; paste into User Rules to activate and sync.
+3. Paste from [`rules/user-ai-toolkit.mdc`](../rules/user-ai-toolkit.mdc) or the [README suggested user rules](../README.md#suggested-user-rules) to activate and sync.
 
-### References
+## References
 
 - [Cursor Rules](https://cursor.com/docs/rules)
 - [Importing rules](https://cursor.com/docs/rules#importing-rules)
 - [Rule anatomy](https://cursor.com/docs/rules#rule-anatomy)
 - [User rules not recognized from ~/.cursor/rules](https://forum.cursor.com/t/user-rules-are-not-recognized-from-folder-cursor-rules/144739)
 - [Feature request: global ~/.cursor/rules .mdc support](https://forum.cursor.com/t/support-for-cursor-rules-for-global-mdc-rules/144819)
-
-## Claude
-
-*(Documentation for Claude-based workflows will be added here.)*

@@ -12,6 +12,7 @@ Organize tools for consumption via the install/uninstall scripts (Cursor integra
   skills/                   # Agent skill descriptions (e.g. SKILL.md-style)
   agents/                   # Agent definitions consumed by Cursor
   scripts/                  # Shell helpers (installed to ~/.cursor/ai-toolkit)
+  docs/                     # Platform notes (e.g. Cursor setup and behavior)
 ```
 
 ## Installing the repo
@@ -51,8 +52,34 @@ Rules must live in each project’s `.cursor/rules/` tree. Use one of:
 - **Script:** `~/.cursor/ai-toolkit/install-rules.sh --filter auto` from the project directory (detects stacks from [`rules/manifest.sh`](rules/manifest.sh)).
 - **Cursor UI:** **Settings → Rules → Remote rule (GitHub)** syncs into `.cursor/rules/imported/<repoName>/` ([Importing rules](https://cursor.com/docs/rules#importing-rules)).
 
-See [`Docs.md`](Docs.md) for Cursor rule discovery limits and troubleshooting.
+See [`docs/cursor.md`](docs/cursor.md) for Cursor setup, rule discovery limits, and troubleshooting.
 
+### Suggested user rules
+
+After you install project rules, add this **user rule** so the agent reports which ai-toolkit rules it applied. That makes it easy to see during prompts whether project rules (e.g. `go-standards.mdc`) actually attached — if the table is wrong or empty, something is misconfigured.
+
+**How to add manually**
+
+1. Open **Cursor → Settings → Rules → User Rules**.
+2. Paste the block below (merge with any existing user rules).
+3. Save. User rules sync to other machines on the same Cursor account ([`docs/cursor.md`](docs/cursor.md)).
+
+**Suggested text**
+
+```markdown
+After creating or modifying files, end your response with **Rules applied** (last section). Skip when no files changed.
+
+List ai-toolkit `rules/` filenames you followed: infer from each rule’s frontmatter **globs**, cross-references in rule bodies (e.g. hub rules citing companions), and any `@`-mentioned rules. If none: `None (ai-toolkit rules)`.
+
+## Rules applied
+
+| File Pattern | Rules |
+|------|-------|
+| `*.go` | `go-standards.mdc` |
+| `*_test.go` | `go-standards.mdc`, `go-testing.mdc` |
+
+One row per changed file; alphabetize rules; collapse paths that share the same set.
+```
 ### Troubleshooting
 
 - **`Operation not permitted` or symlink errors:** Run with `--copy`, or enable symlink support (e.g. Windows Developer Mode).

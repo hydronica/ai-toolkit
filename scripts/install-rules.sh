@@ -385,7 +385,7 @@ main() {
   fi
   echo ""
   echo "Reload the workspace in Cursor if rules do not appear immediately."
-  echo "See Docs.md for known Cursor limitations around nested .cursor/rules/ paths."
+  echo "See docs/cursor.md for known Cursor limitations around nested .cursor/rules/ paths."
 }
 
 main "$@"
