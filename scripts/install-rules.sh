@@ -26,9 +26,9 @@ usage() {
 Usage: install-rules.sh [--filter auto|all|org|<stack>[,<stack>...]] [--link|--copy] [--project <dir>] [--dry-run] [-h|--help]
 
   --filter <spec>  Which rules to install (default: auto)
-                   auto  — org rules + stacks detected in the project (see rules/manifest.sh)
-                   all   — org rules + every stack in the manifest
-                   org   — org rules only
+                   auto  — org rules (if any) + stacks detected in the project (see rules/manifest.sh)
+                   all   — org rules (if any) + every stack in the manifest
+                   org   — org rules only (may select nothing if manifest defines none)
                    go    — org + go stack (comma-separate for multiple stacks)
   --link           Symlink each rule file (default when source is local)
   --copy           Copy each rule file (default when source is remote)
@@ -157,8 +157,6 @@ load_manifest() {
 
   # shellcheck source=/dev/null
   source "${manifest}"
-
-  ((${#ORG_RULES[@]} > 0)) || die "Manifest defines no org rules: ${manifest}"
 }
 
 stack_detect_files() {
@@ -197,9 +195,11 @@ SELECTED_STACKS=()
 add_rule_if_new() {
   local candidate="$1"
   local existing
-  for existing in "${SELECTED_RULES[@]}"; do
-    [[ "${existing}" == "${candidate}" ]] && return 0
-  done
+  if ((${#SELECTED_RULES[@]} > 0)); then
+    for existing in "${SELECTED_RULES[@]}"; do
+      [[ "${existing}" == "${candidate}" ]] && return 0
+    done
+  fi
   SELECTED_RULES+=("${candidate}")
 }
 
@@ -223,9 +223,11 @@ resolve_selected_rules() {
   SELECTED_RULES=()
   SELECTED_STACKS=()
 
-  for rule in "${ORG_RULES[@]}"; do
-    add_rule_if_new "${rule}"
-  done
+  if ((${#ORG_RULES[@]} > 0)); then
+    for rule in "${ORG_RULES[@]}"; do
+      add_rule_if_new "${rule}"
+    done
+  fi
 
   case "${filter_spec}" in
     org)
@@ -256,10 +258,12 @@ resolve_selected_rules() {
       ;;
   esac
 
-  local file
-  for file in "${SELECTED_RULES[@]}"; do
-    [[ -f "${source_rules}/${file}" ]] || die "Rule file missing in source: ${file}"
-  done
+  if ((${#SELECTED_RULES[@]} > 0)); then
+    local file
+    for file in "${SELECTED_RULES[@]}"; do
+      [[ -f "${source_rules}/${file}" ]] || die "Rule file missing in source: ${file}"
+    done
+  fi
 }
 
 install_selected_rules() {
@@ -326,14 +330,27 @@ main() {
   resolve_rules_source
   resolve_selected_rules "${project_root}" "${SOURCE_RULES}" "${filter_spec}"
 
-  local -a selected_rules=("${SELECTED_RULES[@]}")
+  local -a selected_rules=()
+  if ((${#SELECTED_RULES[@]} > 0)); then
+    selected_rules=("${SELECTED_RULES[@]}")
+  fi
   local -a selected_stacks=()
   if ((${#SELECTED_STACKS[@]} > 0)); then
     selected_stacks=("${SELECTED_STACKS[@]}")
   fi
 
   if ((${#selected_rules[@]} == 0)); then
-    die "No rules selected for --filter ${filter_spec}"
+    case "${filter_spec}" in
+      org)
+        die "No rules selected for --filter org (manifest defines no org rules). Use --filter auto, --filter all, or an explicit stack (e.g. --filter go)."
+        ;;
+      auto)
+        die "No rules selected for --filter auto (no org rules in manifest and no stacks detected). Pass an explicit stack, e.g. --filter go, or use --filter all."
+        ;;
+      *)
+        die "No rules selected for --filter ${filter_spec}. See ${MANIFEST_NAME} for available stacks."
+        ;;
+    esac
   fi
 
   local mode used_fallback
@@ -356,7 +373,11 @@ main() {
   if ((${#selected_stacks[@]} > 0)); then
     echo "Stacks:  ${selected_stacks[*]}"
   elif [[ "${filter_spec}" == "auto" ]]; then
-    echo "Stacks:  (none detected — org rules only)"
+    if ((${#ORG_RULES[@]} > 0)); then
+      echo "Stacks:  (none detected — org rules only)"
+    else
+      echo "Stacks:  (none detected)"
+    fi
   fi
   echo "Rules:"
   local file
@@ -385,7 +406,7 @@ main() {
   fi
   echo ""
   echo "Reload the workspace in Cursor if rules do not appear immediately."
-  echo "See Docs.md for known Cursor limitations around nested .cursor/rules/ paths."
+  echo "See docs/cursor.md for known Cursor limitations around nested .cursor/rules/ paths."
 }
 
 main "$@"
