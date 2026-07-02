@@ -12,7 +12,7 @@ How Cursor discovers and loads ai-toolkit assets — install paths, rules (proje
 | Commands | `~/.cursor/commands/ai-toolkit/` | Supported — Cursor scans user-level command directories |
 | Agents | `~/.cursor/agents/ai-toolkit/` | Supported at user level |
 | Scripts | `~/.cursor/ai-toolkit/` | Shell helpers (e.g. `install-rules.sh`) |
-| User rules | `~/.cursor/rules/user-ai-toolkit.txt` | **Not loaded by Cursor** — see [Where user rules are stored](#where-user-rules-are-stored) |
+| User rules | **Settings → Rules → User Rules** (UI) | Not installed by `install.sh` — see [Where user rules are stored](#where-user-rules-are-stored) |
 | Project rules | *(per project)* | **Project-scoped** `.mdc` — see below |
 
 Skills and commands work globally after `install.sh`. **Project rules** are installed per repo with `install-rules.sh` or the **`install_rules`** command.
@@ -59,7 +59,7 @@ Example value (truncated):
 
 To find `<workspace-id>` for a folder, read `workspace.json` in each `workspaceStorage/*` subdirectory and match your project URI.
 
-**Implication for ai-toolkit:** `install.sh` copies [`rules/user-ai-toolkit.txt`](rules/user-ai-toolkit.txt) to `~/.cursor/rules/user-ai-toolkit.txt` as a **versioned source-of-truth** for your team or repo. To activate in Cursor, paste (or merge) into **Settings → User Rules** on each account — or rely on cloud sync after the first paste. Cursor does not load the installed file as a rule on its own.
+**Implication for ai-toolkit:** `install.sh` does **not** install user rules. Paste (or merge) the suggested text from [README — Suggested user rules](../README.md#suggested-user-rules) into **Settings → User Rules** on each account — or rely on cloud sync after the first paste. Cursor does not load files under `~/.cursor/rules/` as rules on their own.
 
 ## Where Cursor expects rules
 
@@ -94,7 +94,7 @@ Rules are installed to `<project>/.cursor/rules/ai-toolkit/`. Which files are in
 
 - **STACK_NAMES** plus **STACK_\<name\>_DETECT** and **STACK_\<name\>_RULES** per language pack
 
-Add new language packs by extending `manifest.sh` and adding rule files under `rules/`. User-level rules belong in [`rules/user-ai-toolkit.mdc`](../rules/user-ai-toolkit.mdc) (reference); paste into **Settings → User Rules** to apply.
+Add new language packs by extending `manifest.sh` and adding rule files under `rules/`. User-level rules are pasted into **Settings → User Rules** — see [README — Suggested user rules](../README.md#suggested-user-rules).
 
 **Alternative — Remote rule (GitHub) import**
 
@@ -151,7 +151,7 @@ Team Rules → Project Rules → User Rules ([Team Rules](https://cursor.com/doc
 
 1. Confirm text in **Settings → Rules → User Rules** on each machine (or sign into the same Cursor account and wait for cloud sync).
 2. Optional: inspect workspace `state.vscdb` for a `scope: "user"` descriptor under `workbench.customize.primitiveSourceSnapshot.rules.v3` — confirms local UI cache only, not the full rule body.
-3. Paste from [`rules/user-ai-toolkit.mdc`](../rules/user-ai-toolkit.mdc) or the [README suggested user rules](../README.md#suggested-user-rules) to activate and sync.
+3. Paste from the [README suggested user rules](../README.md#suggested-user-rules) to activate and sync.
 
 ## References
 

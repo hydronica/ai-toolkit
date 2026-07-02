@@ -88,7 +88,7 @@ One row per changed file; alphabetize rules; collapse paths that share the same 
 ## Using assets with Cursor
 
 - **User-level install:** After `install.sh`, commands, skills, and agents live under `~/.cursor/{commands,skills,agents}/ai-toolkit`, with scripts at `~/.cursor/ai-toolkit`.
-- **Project rules:** Run `install-rules.sh` or the **`install_rules`** command to link filtered rules into `<project>/.cursor/rules/ai-toolkit/`. Org rules (e.g. `rule-attribution.mdc`) always install; language stacks (Go, etc.) are selected by `--filter auto` or explicitly.
+- **Project rules:** Run `install-rules.sh` or the **`install_rules`** command to link filtered rules into `<project>/.cursor/rules/ai-toolkit/`. With `--filter auto`, language stacks (Go, etc.) are selected from detected project markers; pass an explicit stack (e.g. `--filter go`) when auto detects nothing.
 - **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke **`@red-green-bug-fix`** (not auto-attached).
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
