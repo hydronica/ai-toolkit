@@ -15,7 +15,11 @@ For **bug fixes and regressions**, invoke `@red-green-bug-fix` (replication cont
 - Prefer one case per regression unless several share setup; use direct `t.Run` when a single scenario suffices.
 - If automation is blocked, `t.Skip` with issue ID, contract summary, and why (manual steps still required in PR).
 
-Primary pattern: prefer clear tests for behavior. Use table-driven tests when they improve readability across many independent cases; avoid them for simple one-assert tests or when test cases depend on shared state.
+## Test naming
+
+One test per exported symbol: `TestParseInt`, `TestUserService_Create`. Put scenarios in table/trial or `t.Run` case names (e.g. `"rejects empty input"`).
+
+Behavioral names (`TestReturns422ForDuplicateEmail`) are **exceptions** for integration or cross-cutting cases only — ask if unsure. Not RSpec/Jest-style names for unit tests.
 
 ## Table-driven with `trial` (when it adds value)
 
@@ -37,12 +41,9 @@ func TestParseInt(t *testing.T) {
 }
 ```
 
-Skip table-driven structure when:
-- a test has only one straightforward setup + assertion
-- scenarios are stateful and order-dependent
-- subtests would hide intent more than they help
+### Table vs inline — one style per test
 
-For those cases, write direct tests with explicit setup and expectations.
+Per `Test…` function: **all table/trial or all inline — never both**. Multiple cases → full table (no extra assertions after `SubTest`). Single case → direct test. Stateful/order-dependent → isolated subtests, not a shared table.
 
 ## Failure style
 

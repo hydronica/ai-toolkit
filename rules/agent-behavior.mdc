@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+
+# Applying project rules
+
+## Rule precedence
+
+Installed rules **override surrounding code** when they conflict. Match local style only where rules are silent; do not preserve non-idiomatic patterns to minimize diff. Apply standards when converting code even if neighboring lines still use the old pattern.
+
+## Ambiguity
+
+If scope, API, naming, semantics, or approach is unclear — **ask the user**; do not guess or default to existing code or the smallest change.
