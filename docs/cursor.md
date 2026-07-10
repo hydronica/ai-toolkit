@@ -78,7 +78,7 @@ Cursor supports three rule sources ([Rules docs](https://cursor.com/docs/rules))
 **Recommended — script or command**
 
 ```bash
-# From your project directory (auto-detect stacks from rules/manifest.sh):
+# From your project directory (auto-detect stacks; registers project for sync):
 ~/.cursor/ai-toolkit/install-rules.sh --filter auto
 
 # Explicit Go stack:
@@ -86,6 +86,19 @@ Cursor supports three rule sources ([Rules docs](https://cursor.com/docs/rules))
 
 # Preview only:
 ~/.cursor/ai-toolkit/install-rules.sh --filter auto --dry-run
+
+# List or sync all registered projects:
+~/.cursor/ai-toolkit/install-rules.sh --list
+~/.cursor/ai-toolkit/install-rules.sh --sync-all
+```
+
+Re-running **`install.sh`** updates `~/.cursor/ai-toolkit/rules-source/` and syncs all registered projects by default (`--no-sync-rules` to skip).
+
+**Registry** — `~/.cursor/ai-toolkit/projects.registry` (pipe-delimited, one project per line):
+
+```text
+# columns: absolute_path|filter|mode
+/Users/jane/code/api-service|auto|link
 ```
 
 Or invoke the **`install_rules`** command in Agent chat ([`commands/install_rules.md`](../commands/install_rules.md)).
@@ -138,6 +151,20 @@ Frontmatter controls when a rule applies ([Rule anatomy](https://cursor.com/docs
 **Precedence when guidance conflicts**
 
 Team Rules → Project Rules → User Rules ([Team Rules](https://cursor.com/docs/rules#team-rules)).
+
+## Multi-project rule sync
+
+| Path | Purpose |
+|------|---------|
+| `~/.cursor/ai-toolkit/rules-source/` | Canonical rules copy/symlink updated by `install.sh` |
+| `~/.cursor/ai-toolkit/projects.registry` | Registered projects (`path\|filter\|mode`) |
+| `<project>/.cursor/rules/ai-toolkit/` | Installed rules per project |
+
+- **Register:** default on `install-rules.sh` install; use `--no-register` to opt out.
+- **Sync:** `install.sh` runs `--sync-all` after updating rules-source (unless `--no-sync-rules`).
+- **Unregister:** `install-rules.sh --unregister --project <dir>` (files stay on disk).
+- **Purge:** `install-rules.sh --purge --project <dir>` or `--purge-all`.
+- **Uninstall:** `uninstall.sh` removes global toolkit files; add `--purge-project-rules` to remove project rules too. Default uninstall leaves link-mode symlinks dangling once `rules-source/` is gone.
 
 ## Verifying rules are active
 

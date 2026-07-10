@@ -28,17 +28,17 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/
 - `${HOME}/.cursor/commands/ai-toolkit`
 - `${HOME}/.cursor/skills/ai-toolkit`
 - `${HOME}/.cursor/agents/ai-toolkit`
-- `${HOME}/.cursor/ai-toolkit` — executable helpers from this repo’s `scripts/` (e.g. `install-rules.sh`, `pr_sum.sh`). Add that directory to `PATH` if you want to run them by name; see the post-install hint from `install.sh`.
+- `${HOME}/.cursor/ai-toolkit` — scripts, canonical `rules-source/`, and `projects.registry` (e.g. `install-rules.sh`). Add that directory to `PATH` if you want to run scripts by name; see the post-install hint from `install.sh`.
 
-`install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode.
+`install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode. Pass `--no-sync-rules` to skip refreshing registered project rules.
 
-Each run replaces the existing `ai-toolkit` entry under each category and the bin directory (`rm -rf` then link or copy). Online installs need `curl` and `tar`.
+Each run replaces the existing `ai-toolkit` entry under each category and rebuilds `${HOME}/.cursor/ai-toolkit/`. Online installs need `curl` and `tar`.
 
-**Rules are not installed globally** — Cursor does not reliably load user-level rule files. Install rules per project instead (see below).
+Re-running `install.sh` updates `rules-source/` and **syncs all registered projects** by default (copy-mode projects get fresh rule files; link-mode projects get reconciled symlinks).
 
 ### uninstall 
 
-[`uninstall.sh`](uninstall.sh) removes those paths and `${HOME}/.cursor/ai-toolkit` (whether each is a symlink or a copied directory). Project-level rules under `.cursor/rules/ai-toolkit/` in your repos are not removed.
+[`uninstall.sh`](uninstall.sh) removes global toolkit paths. By default it does **not** remove project rules under `.cursor/rules/ai-toolkit/`. Use `uninstall.sh --purge-project-rules` to remove rules from all registered projects first.
 
 ```
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/uninstall.sh)"
@@ -46,17 +46,29 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/
 
 ### Installing rules in a project
 
-Rules must live in each project’s `.cursor/rules/` tree. Use one of:
+Rules must live in each project’s `.cursor/rules/` tree. The first install **registers** the project in `~/.cursor/ai-toolkit/projects.registry` so future `install.sh` runs can sync it.
+
+Use one of:
 
 - **Command:** invoke **`install_rules`** in Agent chat (see [`commands/install_rules.md`](commands/install_rules.md)).
 - **Script:** `~/.cursor/ai-toolkit/install-rules.sh --filter auto` from the project directory (detects stacks from [`rules/manifest.sh`](rules/manifest.sh)).
+- **Sync all registered projects:** `~/.cursor/ai-toolkit/install-rules.sh --sync-all`
+- **List registered projects:** `~/.cursor/ai-toolkit/install-rules.sh --list`
 - **Cursor UI:** **Settings → Rules → Remote rule (GitHub)** syncs into `.cursor/rules/imported/<repoName>/` ([Importing rules](https://cursor.com/docs/rules#importing-rules)).
+
+**Registry format** (`~/.cursor/ai-toolkit/projects.registry`):
+
+```text
+# columns: absolute_path|filter|mode
+/Users/jane/code/api-service|auto|link
+/Users/jane/code/legacy-app|go|copy
+```
 
 See [`docs/cursor.md`](docs/cursor.md) for Cursor setup, rule discovery limits, and troubleshooting.
 
 ### Suggested user rules
 
-After you install project rules, add this **user rule** so the agent reports which ai-toolkit rules it applied. That makes it easy to see during prompts whether project rules (e.g. `go-standards.mdc`) actually attached — if the table is wrong or empty, something is misconfigured.
+After you install project rules, add this **user rule** so the agent reports which project rules actually guided its work. That makes it easy to see during prompts whether rules attached — if the table is empty or shows “none matched,” something may be misconfigured.
 
 **How to add manually**
 
@@ -67,18 +79,23 @@ After you install project rules, add this **user rule** so the agent reports whi
 **Suggested text**
 
 ```markdown
+Rule Attribution: 
 After creating or modifying files, end your response with **Rules applied** (last section). Skip when no files changed.
 
-List ai-toolkit `rules/` filenames you followed: infer from each rule’s frontmatter **globs**, cross-references in rule bodies (e.g. hub rules citing companions), and any `@`-mentioned rules. If none: `None (ai-toolkit rules)`.
+Summarize which Cursor **project rules** guided your edits. List only rules that were actually in context (globs, alwaysApply, description match, or explicit `@` mention). Do not guess rule names.
 
 ## Rules applied
 
-| File Pattern | Rules |
+| File / Pattern | Rules |
 |------|-------|
-| `*.go` | `go-standards.mdc` |
-| `*_test.go` | `go-standards.mdc`, `go-testing.mdc` |
+| `path/or/pattern` | `rule-name` |
 
-One row per changed file; alphabetize rules; collapse paths that share the same set.
+When no per-file table applies, use a single row with `—` in the first column:
+
+- `— | No Rules` — no project rules were loaded
+- `— | None` — project rules exist but none applied to the changed files
+
+Otherwise: one row per changed file; collapse paths that share the same rule set; alphabetize rule names within each cell.
 ```
 ### Troubleshooting
 
@@ -87,8 +104,8 @@ One row per changed file; alphabetize rules; collapse paths that share the same 
 
 ## Using assets with Cursor
 
-- **User-level install:** After `install.sh`, commands, skills, and agents live under `~/.cursor/{commands,skills,agents}/ai-toolkit`, with scripts at `~/.cursor/ai-toolkit`.
-- **Project rules:** Run `install-rules.sh` or the **`install_rules`** command to link filtered rules into `<project>/.cursor/rules/ai-toolkit/`. With `--filter auto`, language stacks (Go, etc.) are selected from detected project markers; pass an explicit stack (e.g. `--filter go`) when auto detects nothing.
+- **User-level install:** After `install.sh`, commands, skills, and agents live under `~/.cursor/{commands,skills,agents}/ai-toolkit`, with scripts and `rules-source/` at `~/.cursor/ai-toolkit`.
+- **Project rules:** Run `install-rules.sh` or the **`install_rules`** command to install filtered rules into `<project>/.cursor/rules/ai-toolkit/`. Projects are registered automatically for sync on the next `install.sh` run. Use `--no-register` to opt out.
 - **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke **`@red-green-bug-fix`** (not auto-attached).
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
