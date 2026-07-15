@@ -6,22 +6,25 @@ readonly REPO_NAME="ai-toolkit"
 readonly REMOTE_TARBALL_URL="https://codeload.github.com/hydronica/ai-toolkit/tar.gz/refs/heads/main"
 readonly RESOURCE_TYPES=("commands" "skills" "agents")
 readonly BIN_SOURCE_DIR="scripts"
+readonly RULES_DIR="rules"
 readonly BIN_TARGET="${HOME}/.cursor/${REPO_NAME}"
+readonly RULES_TARGET="${BIN_TARGET}/rules-source"
+readonly REGISTRY_FILE="${BIN_TARGET}/projects.registry"
 readonly GITHUB_REPO="hydronica/ai-toolkit"
 readonly GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--link|--copy]
+Usage: install.sh [--link|--copy] [--no-sync-rules]
 
-  --link     Link from local ai-toolkit source when available
-  --copy     Copy from local/online source
-  -h, --help Show this help
+  --link           Link from local ai-toolkit source when available
+  --copy           Copy from local/online source
+  --no-sync-rules  Skip syncing registered project rules after install
+  -h, --help       Show this help
 
 Installs to ${HOME}/.cursor/(commands|skills|agents)/ai-toolkit/
-Installs scripts/ as a bin directory at ${HOME}/.cursor/ai-toolkit/
-
-Project rules are installed separately — see scripts/install-rules.sh or the install_rules command.
+Installs scripts/, rules-source/, and registry support under ${HOME}/.cursor/ai-toolkit/
+Syncs registered project rules by default — see scripts/install-rules.sh or the install_rules command.
 EOF
 }
 
@@ -74,6 +77,7 @@ validate_source_root() {
     [[ -d "${source_root}/${resource}" ]] || die "Source missing directory: ${resource}"
   done
   [[ -d "${source_root}/${BIN_SOURCE_DIR}" ]] || die "Source missing directory: ${BIN_SOURCE_DIR}"
+  [[ -d "${source_root}/${RULES_DIR}" ]] || die "Source missing directory: ${RULES_DIR}"
 }
 
 fetch_remote_source_root() {
@@ -112,15 +116,88 @@ install_resource() {
 install_bin() {
   local source_root="$1"
   local mode="$2"
+  local entry base name found
+  local -a source_names=()
 
-  mkdir -p "$(dirname "${BIN_TARGET}")"
-  rm -rf "${BIN_TARGET}"
+  # Managed artifacts: entries from scripts/ (except cuse, handled by ensure_cuse).
+  # Preserved state: projects.registry, .env (cuse session), rules-source/, cuse binary.
+  mkdir -p "${BIN_TARGET}"
+
+  for entry in "${source_root}/${BIN_SOURCE_DIR}"/*; do
+    [[ -e "${entry}" ]] || continue
+    base="$(basename "${entry}")"
+
+    [[ "${base}" == "cuse" ]] && continue
+    if [[ "${base}" == ".env" && -f "${BIN_TARGET}/.env" ]]; then
+      continue
+    fi
+
+    source_names+=("${base}")
+    rm -rf "${BIN_TARGET}/${base}"
+
+    if [[ "${mode}" == "link" ]]; then
+      ln -s "${entry}" "${BIN_TARGET}/${base}"
+    elif [[ -d "${entry}" ]]; then
+      cp -R "${entry}" "${BIN_TARGET}/${base}"
+    else
+      cp "${entry}" "${BIN_TARGET}/${base}"
+      [[ "${base}" == *.sh ]] && chmod +x "${BIN_TARGET}/${base}"
+    fi
+  done
+
+  for entry in "${BIN_TARGET}"/*; do
+    [[ -e "${entry}" ]] || continue
+    base="$(basename "${entry}")"
+    case "${base}" in
+      projects.registry|.env|rules-source|cuse) continue ;;
+    esac
+    found="false"
+    for name in "${source_names[@]}"; do
+      if [[ "${name}" == "${base}" ]]; then
+        found="true"
+        break
+      fi
+    done
+    if [[ "${found}" == "false" ]]; then
+      rm -rf "${entry}"
+    fi
+  done
+}
+
+install_rules_source() {
+  local source_root="$1"
+  local mode="$2"
+
+  rm -rf "${RULES_TARGET}"
 
   if [[ "${mode}" == "link" ]]; then
-    ln -s "${source_root}/${BIN_SOURCE_DIR}" "${BIN_TARGET}"
+    ln -s "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
   else
-    cp -R "${source_root}/${BIN_SOURCE_DIR}" "${BIN_TARGET}"
-    find "${BIN_TARGET}" -type f -name '*.sh' -exec chmod +x {} +
+    cp -R "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
+  fi
+}
+
+sync_registered_projects() {
+  local install_rules="${BIN_TARGET}/install-rules.sh"
+  [[ -x "${install_rules}" ]] || install_rules="${BIN_TARGET}/install-rules.sh"
+  if [[ ! -f "${install_rules}" ]]; then
+    echo "Warning: install-rules.sh not found; skipping project rule sync." >&2
+    return 0
+  fi
+  bash "${install_rules}" --sync-all
+}
+
+check_gh() {
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "GitHub CLI (gh) is not installed. pr_sum.sh and release_sum.sh require it."
+    echo "  Install: https://cli.github.com/"
+    echo "  Then run: gh auth login"
+    return 0
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "GitHub CLI is installed but not authenticated."
+    echo "  Run: gh auth login"
+    echo "  Required for pr_sum.sh and release_sum.sh."
   fi
 }
 
@@ -161,7 +238,7 @@ ensure_cuse() {
 }
 
 main() {
-  local requested_mode=""
+  local requested_mode="" sync_rules="true"
   while (($# > 0)); do
     case "$1" in
       --link)
@@ -169,6 +246,9 @@ main() {
         ;;
       --copy)
         requested_mode="copy"
+        ;;
+      --no-sync-rules)
+        sync_rules="false"
         ;;
       -h|--help)
         usage
@@ -217,6 +297,7 @@ main() {
   done
 
   install_bin "${source_root}" "${mode}"
+  install_rules_source "${source_root}" "${mode}"
 
   # Ensure cuse binary is installed/updated
   ensure_cuse
@@ -231,9 +312,17 @@ main() {
     echo "Installed to ${HOME}/.cursor/{commands,skills,agents}/${REPO_NAME} using ${mode} from ${source_kind}."
   fi
   echo "Installed bin directory at ${BIN_TARGET} (from ${BIN_SOURCE_DIR}/)."
+  echo "Installed rules source at ${RULES_TARGET} (from ${RULES_DIR}/)."
+
+  if [[ "${sync_rules}" == "true" ]]; then
+    echo ""
+    sync_registered_projects
+  fi
   echo ""
   echo "To run the bundled scripts from anywhere, add this to your shell config (e.g. ~/.zshrc or ~/.bashrc):"
   echo "  export PATH=\"\${HOME}/.cursor/${REPO_NAME}:\${PATH}\""
+  echo ""
+  check_gh
 }
 
 main "$@"
