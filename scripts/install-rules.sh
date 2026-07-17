@@ -209,13 +209,28 @@ stack_is_known() {
   return 1
 }
 
+project_has_marker_file() {
+  local project_root="$1"
+  local marker="$2"
+  local found
+
+  [[ -e "${project_root}/${marker}" ]] && return 0
+
+  found="$(
+    find "${project_root}" \
+      \( -name .git -o -name node_modules -o -name vendor \) -prune -o \
+      -name "${marker}" -type f -print -quit 2>/dev/null
+  )"
+  [[ -n "${found}" ]]
+}
+
 stack_detected_in_project() {
   local project_root="$1"
   local stack="$2"
   local detect_file
   while IFS= read -r detect_file; do
     [[ -n "${detect_file}" ]] || continue
-    [[ -e "${project_root}/${detect_file}" ]] && return 0
+    project_has_marker_file "${project_root}" "${detect_file}" && return 0
   done < <(stack_detect_files "${stack}")
   return 1
 }
