@@ -54,15 +54,22 @@ project-root/
 
 ## Services (typical shape)
 
-- Group by **feature** (e.g. `internal/users/…` with handler, service, store, types, errors together).
+- Group by **feature** (e.g. `internal/users/…` with handler, service, store together).
 - Use layer-first layout only when layers are genuinely shared and stable.
 - Avoid deep paths like `internal/app/domain/user/service/impl/…`.
+
+## Files within a package
+
+Prefer **one primary `.go` file** (plus `_test.go`) until ~400+ lines or clearly distinct subsystems. Split when (a) hard to review, (b) a second subsystem appears, or (c) build boundaries require it (`//go:build`, `*_unix.go`, generated code).
+
+Keep sentinels and small helpers in the primary file. Avoid `errors.go`, `types.go`, `paths.go`, and similar kind-splits until related symbols form a cluster. Simplicity applies to **file layout**, not just APIs.
 
 ## Anti-patterns
 
 - `src/` at repo root (not Go convention).
 - Using `pkg/` for first-party code unless you have a clear public-package boundary.
 - Mixing `package main` and other package names in the same directory.
+- Kind-split files or extra `.go` files created only to test unexported helpers (`go-testing.mdc`).
 
 ## Package names
 

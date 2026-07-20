@@ -7,6 +7,8 @@ alwaysApply: false
 
 Prefer **explicit errors**, **synchronous APIs** unless concurrency is intrinsic, **small consumer-defined interfaces**, **concrete return types**, **`context.Context` as the first parameter** when cancellation/deadlines apply, and **feature-oriented packages** (`internal/` for unstable implementation).
 
+**File layout:** one primary `.go` file per package until ~400+ lines or distinct subsystems; see **`go-project-structure.md`**.
+
 Tests: when editing `*_test.go`, follow **`go-testing.mdc`** alongside this rule.
 
 Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorganizing module layout, **read `go-project-structure.md`** in this directory before changing structure.
@@ -96,7 +98,7 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
 
 1. Explicit over implicit  
 2. Composition over inheritance  
-3. Simplicity over cleverness  
+3. Simplicity over cleverness: APIs and file layout  
 4. Errors are values—handle deliberately  
 5. Synchronous defaults—caller adds concurrency  
 6. Interfaces belong where they are consumed  

@@ -68,7 +68,7 @@ Declare **minimal interfaces** beside test helpers or production consumers so fa
 
 ## Unexported helpers
 
-Default: validate through exported APIs. Reach `package foo` internals from `foo_test.go` only when it genuinely reduces brittle surface—accept some duplication over testing every helper.
+Default: validate through exported APIs. Reach `package foo` internals from `foo_test.go` only when it genuinely reduces brittle surface—accept some duplication over testing every helper. Do not create a `.go` file solely to isolate an unexported helper for testing.
 
 ## Parallelism
 
