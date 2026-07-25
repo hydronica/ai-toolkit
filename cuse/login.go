@@ -71,16 +71,15 @@ func runChromiumLogin(ctx context.Context, browserPath string) (string, error) {
 }
 
 func runFirefoxLogin(ctx context.Context) (string, error) {
-	cookiesPath, err := firefoxCookiesPath()
-	if err != nil {
-		return "", fmt.Errorf("locating Firefox cookies: %w", err)
-	}
-
 	if err := openURL(loginURL); err != nil {
 		return "", fmt.Errorf("opening browser: %w", err)
 	}
 
 	return waitForLoginCookie(ctx, func() (string, error) {
+		cookiesPath, err := firefoxCookiesPath()
+		if err != nil {
+			return "", nil
+		}
 		cookie, err := readFirefoxCookie(cookiesPath)
 		if err != nil {
 			return "", fmt.Errorf("reading cookies: %w", err)

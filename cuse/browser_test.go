@@ -16,11 +16,13 @@ func TestParseDesktopExec(t *testing.T) {
 		return parseDesktopExec(in), nil
 	}
 	cases := trial.Cases[string, string]{
-		"firefox snap":          {Input: "/snap/bin/firefox %u", Expected: "/snap/bin/firefox"},
-		"chromium with flags":   {Input: "/usr/bin/chromium --enable-features=foo %U", Expected: "/usr/bin/chromium"},
-		"quoted path":           {Input: `"/opt/google/chrome" %U`, Expected: "/opt/google/chrome"},
-		"field code only":       {Input: "firefox %u", Expected: "firefox"},
-		"empty":                 {Input: "", Expected: ""},
+		"firefox snap":                {Input: "/snap/bin/firefox %u", Expected: "/snap/bin/firefox"},
+		"chromium with flags":         {Input: "/usr/bin/chromium --enable-features=foo %U", Expected: "/usr/bin/chromium"},
+		"quoted path":                 {Input: `"/opt/google/chrome" %U`, Expected: "/opt/google/chrome"},
+		"quoted path with spaces":     {Input: `"/opt/Google Chrome/google-chrome" %U`, Expected: "/opt/Google Chrome/google-chrome"},
+		"escaped space in path":       {Input: `/opt/Google\ Chrome/chrome %u`, Expected: "/opt/Google Chrome/chrome"},
+		"field code only":             {Input: "firefox %u", Expected: "firefox"},
+		"empty":                       {Input: "", Expected: ""},
 	}
 	trial.New(fn, cases).SubTest(t)
 }
@@ -159,6 +161,112 @@ Default=1
 	trial.New(fn, cases).SubTest(t)
 }
 
+func TestFindFirefoxBrowser(t *testing.T) {
+	fn := func(layout string) (bool, error) {
+		home, err := os.MkdirTemp("", "cuse-home-*")
+		if err != nil {
+			return false, err
+		}
+		defer os.RemoveAll(home)
+
+		switch layout {
+		case "profile without cookies":
+			base := filepath.Join(home, ".mozilla", "firefox")
+			profileDir := filepath.Join(base, "profiles", "abc.default")
+			if err := os.MkdirAll(profileDir, 0o755); err != nil {
+				return false, err
+			}
+			ini := `[Profile0]
+Name=default
+IsRelative=1
+Path=profiles/abc.default
+Default=1
+`
+			if err := os.WriteFile(filepath.Join(base, "profiles.ini"), []byte(ini), 0o600); err != nil {
+				return false, err
+			}
+		case "no profile":
+			oldPath := os.Getenv("PATH")
+			os.Setenv("PATH", filepath.Join(home, "empty-bin"))
+			defer os.Setenv("PATH", oldPath)
+		default:
+			return false, fmt.Errorf("unknown layout %q", layout)
+		}
+
+		oldHome := os.Getenv("HOME")
+		os.Setenv("HOME", home)
+		defer os.Setenv("HOME", oldHome)
+
+		return findFirefoxBrowser() != "", nil
+	}
+	cases := trial.Cases[string, bool]{
+		"fresh profile without cookies database": {
+			Input:    "profile without cookies",
+			Expected: true,
+		},
+		"no profile and no firefox binary": {
+			Input:    "no profile",
+			Expected: false,
+		},
+	}
+	trial.New(fn, cases).SubTest(t)
+}
+
+func TestReadFirefoxCookie(t *testing.T) {
+	fn := func(layout string) (string, error) {
+		dir, err := os.MkdirTemp("", "cuse-cookies-*")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(dir)
+
+		dbPath := filepath.Join(dir, "cookies.sqlite")
+		switch layout {
+		case "missing":
+			return readFirefoxCookie(dbPath)
+		case "present":
+			db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dbPath))
+			if err != nil {
+				return "", err
+			}
+			if _, err := db.Exec(`CREATE TABLE moz_cookies (
+				id INTEGER PRIMARY KEY,
+				name TEXT,
+				value TEXT,
+				host TEXT,
+				path TEXT
+			)`); err != nil {
+				db.Close()
+				return "", err
+			}
+			if _, err := db.Exec(
+				`INSERT INTO moz_cookies (name, value, host, path) VALUES (?, ?, ?, ?)`,
+				cookieName, "session-token-value", ".cursor.com", "/",
+			); err != nil {
+				db.Close()
+				return "", err
+			}
+			if err := db.Close(); err != nil {
+				return "", err
+			}
+			return readFirefoxCookie(dbPath)
+		default:
+			return "", fmt.Errorf("unknown layout %q", layout)
+		}
+	}
+	cases := trial.Cases[string, string]{
+		"missing database waits for login": {
+			Input:    "missing",
+			Expected: "",
+		},
+		"reads session token": {
+			Input:    "present",
+			Expected: "session-token-value",
+		},
+	}
+	trial.New(fn, cases).SubTest(t)
+}
+
 func TestQueryFirefoxCookieDB(t *testing.T) {
 	fn := func(tokenValue string) (string, error) {
 		dir, err := os.MkdirTemp("", "cuse-cookies-*")
@@ -192,12 +300,93 @@ func TestQueryFirefoxCookieDB(t *testing.T) {
 		if err := db.Close(); err != nil {
 			return "", err
 		}
-		return queryFirefoxCookieDB(dbPath)
+		return queryFirefoxCookieDB(dbPath, false)
 	}
 	cases := trial.Cases[string, string]{
 		"reads session token": {
 			Input:    "session-token-value",
 			Expected: "session-token-value",
+		},
+	}
+	trial.New(fn, cases).SubTest(t)
+}
+
+func TestSnapshotFirefoxCookieDB(t *testing.T) {
+	fn := func(withSidecars bool) (bool, error) {
+		dir, err := os.MkdirTemp("", "cuse-cookies-*")
+		if err != nil {
+			return false, err
+		}
+		defer os.RemoveAll(dir)
+
+		dbPath := filepath.Join(dir, "cookies.sqlite")
+		db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(dbPath))
+		if err != nil {
+			return false, err
+		}
+		if _, err := db.Exec(`CREATE TABLE moz_cookies (
+			id INTEGER PRIMARY KEY,
+			name TEXT,
+			value TEXT,
+			host TEXT,
+			path TEXT
+		)`); err != nil {
+			db.Close()
+			return false, err
+		}
+		if _, err := db.Exec(
+			`INSERT INTO moz_cookies (name, value, host, path) VALUES (?, ?, ?, ?)`,
+			cookieName, "session-token-value", ".cursor.com", "/",
+		); err != nil {
+			db.Close()
+			return false, err
+		}
+		if err := db.Close(); err != nil {
+			return false, err
+		}
+
+		if withSidecars {
+			if err := os.WriteFile(dbPath+"-wal", []byte("wal"), 0o600); err != nil {
+				return false, err
+			}
+			if err := os.WriteFile(dbPath+"-shm", []byte("shm"), 0o600); err != nil {
+				return false, err
+			}
+		}
+
+		tmpPath, cleanup, err := snapshotFirefoxCookieDB(dbPath)
+		if err != nil {
+			return false, err
+		}
+		defer cleanup()
+
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			wantExists := suffix == "" || withSidecars
+			_, err := os.Stat(tmpPath + suffix)
+			switch {
+			case wantExists && err != nil:
+				return false, fmt.Errorf("expected snapshot file %q", tmpPath+suffix)
+			case !wantExists && err == nil:
+				return false, fmt.Errorf("unexpected snapshot file %q", tmpPath+suffix)
+			case !wantExists && !os.IsNotExist(err):
+				return false, err
+			}
+		}
+
+		got, err := queryFirefoxCookieDB(tmpPath, true)
+		if err != nil {
+			return false, err
+		}
+		return got == "session-token-value", nil
+	}
+	cases := trial.Cases[bool, bool]{
+		"copies main database only": {
+			Input:    false,
+			Expected: true,
+		},
+		"copies wal and shm sidecars": {
+			Input:    true,
+			Expected: true,
 		},
 	}
 	trial.New(fn, cases).SubTest(t)

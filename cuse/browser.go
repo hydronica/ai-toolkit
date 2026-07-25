@@ -9,8 +9,14 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
+)
+
+const (
+	cookieDBBusyRetries = 3
+	cookieDBBusyBackoff = 50 * time.Millisecond
 )
 
 type loginStrategy int
@@ -53,10 +59,8 @@ func chooseLoginStrategy() (loginStrategy, string, error) {
 		return loginStrategyChromium, path, nil
 	}
 
-	if path, err := firefoxCookiesPath(); err == nil {
-		if _, err := os.Stat(path); err == nil {
-			return loginStrategyFirefox, "", nil
-		}
+	if findFirefoxBrowser() != "" {
+		return loginStrategyFirefox, "", nil
 	}
 
 	var noStrategy loginStrategy
@@ -152,15 +156,10 @@ func desktopExecPath(path string) string {
 
 // parseDesktopExec returns the executable from a .desktop Exec= value.
 func parseDesktopExec(execLine string) string {
-	execLine = strings.TrimSpace(execLine)
-	if execLine == "" {
+	exe := desktopExecArgv0(execLine)
+	if exe == "" {
 		return ""
 	}
-	fields := strings.Fields(execLine)
-	if len(fields) == 0 {
-		return ""
-	}
-	exe := fields[0]
 	if unquoted, err := strconv.Unquote(exe); err == nil {
 		exe = unquoted
 	}
@@ -168,6 +167,69 @@ func parseDesktopExec(execLine string) string {
 		return ""
 	}
 	return exe
+}
+
+// desktopExecArgv0 returns the first argument from a .desktop Exec= value,
+// respecting quotes and escape sequences from the desktop entry spec.
+func desktopExecArgv0(execLine string) string {
+	execLine = strings.TrimSpace(execLine)
+	if execLine == "" {
+		return ""
+	}
+
+	var argv0 strings.Builder
+	i := 0
+	for i < len(execLine) {
+		switch execLine[i] {
+		case ' ', '\t':
+			return argv0.String()
+		case '"', '\'':
+			quote := execLine[i]
+			i++
+			for i < len(execLine) {
+				if execLine[i] == '\\' && i+1 < len(execLine) {
+					i++
+					argv0.WriteByte(unescapeDesktopExec(execLine[i]))
+					i++
+					continue
+				}
+				if execLine[i] == quote {
+					i++
+					break
+				}
+				argv0.WriteByte(execLine[i])
+				i++
+			}
+		case '\\':
+			if i+1 >= len(execLine) {
+				return argv0.String()
+			}
+			i++
+			argv0.WriteByte(unescapeDesktopExec(execLine[i]))
+			i++
+		default:
+			argv0.WriteByte(execLine[i])
+			i++
+		}
+	}
+	return argv0.String()
+}
+
+func unescapeDesktopExec(c byte) byte {
+	switch c {
+	case 's':
+		return ' '
+	case 'n':
+		return '\n'
+	case 't':
+		return '\t'
+	case 'r':
+		return '\r'
+	case '\\':
+		return '\\'
+	default:
+		return c
+	}
 }
 
 func isChromiumBrowser(desktopName, execPath string) bool {
@@ -187,6 +249,19 @@ func isFirefoxBrowser(desktopName, execPath string) bool {
 	return strings.Contains(joined, "firefox")
 }
 
+// findFirefoxBrowser reports whether Firefox can be used for login, either via
+// a resolvable profile or a firefox executable on PATH.
+func findFirefoxBrowser() string {
+	if _, err := firefoxCookiesPath(); err == nil {
+		return "profile"
+	}
+	path, err := exec.LookPath("firefox")
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
 // findChromiumBrowser returns the path to a Chromium-compatible browser executable.
 func findChromiumBrowser() string {
 	for _, name := range chromiumExecNames {
@@ -196,7 +271,8 @@ func findChromiumBrowser() string {
 	}
 
 	var candidates []string
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		userProfile := os.Getenv("USERPROFILE")
 		candidates = []string{
 			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
@@ -209,7 +285,7 @@ func findChromiumBrowser() string {
 			`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
 			filepath.Join(userProfile, `AppData\Local\Microsoft\Edge\Application\msedge.exe`),
 		}
-	} else if runtime.GOOS == "darwin" {
+	case "darwin":
 		userHome := os.Getenv("HOME")
 		candidates = []string{
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -219,7 +295,7 @@ func findChromiumBrowser() string {
 			filepath.Join(userHome, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
 			filepath.Join(userHome, "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
 		}
-	} else {
+	default:
 		candidates = []string{
 			"/usr/bin/google-chrome",
 			"/usr/bin/google-chrome-stable",
@@ -362,31 +438,90 @@ func firefoxDefaultProfile(iniPath string) (string, error) {
 }
 
 func readFirefoxCookie(dbPath string) (string, error) {
-	value, err := queryFirefoxCookieDB(dbPath)
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("reading Firefox cookie database: %w", err)
+	}
+
+	value, err := queryFirefoxCookieDB(dbPath, false)
 	if err == nil || !isSQLiteBusy(err) {
 		return value, err
 	}
 
+	for range cookieDBBusyRetries {
+		time.Sleep(cookieDBBusyBackoff)
+		value, err = queryFirefoxCookieDB(dbPath, false)
+		if err == nil || !isSQLiteBusy(err) {
+			return value, err
+		}
+	}
+
+	tmpPath, cleanup, err := snapshotFirefoxCookieDB(dbPath)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	return queryFirefoxCookieDB(tmpPath, true)
+}
+
+func snapshotFirefoxCookieDB(dbPath string) (string, func(), error) {
 	tmp, err := os.CreateTemp("", "cuse-cookies-*.sqlite")
 	if err != nil {
-		return "", fmt.Errorf("copying Firefox cookie database: %w", err)
+		return "", nil, fmt.Errorf("copying Firefox cookie database: %w", err)
 	}
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
-	defer os.Remove(tmpPath)
 
-	src, err := os.ReadFile(dbPath)
-	if err != nil {
-		return "", fmt.Errorf("reading Firefox cookie database: %w", err)
+	cleanup := func() {
+		for _, path := range []string{tmpPath, tmpPath + "-wal", tmpPath + "-shm"} {
+			_ = os.Remove(path)
+		}
 	}
-	if err := os.WriteFile(tmpPath, src, 0o600); err != nil {
-		return "", fmt.Errorf("copying Firefox cookie database: %w", err)
+
+	if err := copyFile(dbPath, tmpPath); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("copying Firefox cookie database: %w", err)
 	}
-	return queryFirefoxCookieDB(tmpPath)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := copyFileIfExists(dbPath+suffix, tmpPath+suffix); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("copying Firefox cookie database sidecar: %w", err)
+		}
+	}
+	return tmpPath, cleanup, nil
 }
 
-func queryFirefoxCookieDB(dbPath string) (string, error) {
+func copyFileIfExists(src, dst string) error {
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return copyFile(src, dst)
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o600)
+}
+
+func firefoxCookieDBDSN(dbPath string, immutable bool) string {
 	dsn := fmt.Sprintf("file:%s?mode=ro", filepath.ToSlash(dbPath))
+	if immutable {
+		dsn += "&immutable=1"
+	}
+	return dsn
+}
+
+func queryFirefoxCookieDB(dbPath string, immutable bool) (string, error) {
+	dsn := firefoxCookieDBDSN(dbPath, immutable)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return "", fmt.Errorf("opening Firefox cookie database: %w", err)
