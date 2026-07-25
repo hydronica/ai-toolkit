@@ -1,2 +1,4 @@
 .env
 scripts/cuse
+coverage.out
+coverage.html
