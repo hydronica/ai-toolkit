@@ -8,3 +8,11 @@ build:
 
 clean:
 	rm -f $(OUTPUT)
+
+test:
+	go test -cover ./...
+
+test-coverage:
+	go test -coverprofile=./coverage.out ./...
+	go tool cover -html=coverage.out -o ~/coverage.html
+	open ~/coverage.html
