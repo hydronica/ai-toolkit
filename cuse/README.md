@@ -52,3 +52,4 @@ On-demand:       $2,000.00 spent
 
 - `-version` — Print version and exit
 - `-debug` — Print raw API responses for troubleshooting
+- `-browser firefox|chromium` — Browser for login. Defaults to Firefox on Linux and a Chromium-based browser (Chrome, Edge, Brave) on Windows/macOS.

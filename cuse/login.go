@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
@@ -20,21 +22,36 @@ const (
 // cursor.com. Once WorkosCursorSessionToken appears in the browser's cookies the
 // raw value is returned (without the cookie name prefix). The context should
 // carry cancellation from the caller (e.g. Ctrl-C).
-func runLogin(ctx context.Context) (string, error) {
+//
+// preferred selects the browser: "firefox" or "chromium"/"chrome". Empty defaults
+// to Firefox on Linux and Chromium elsewhere (no cross-browser fallback).
+func runLogin(ctx context.Context, preferred string) (string, error) {
 	fmt.Println("Opening browser — please log in at cursor.com...")
 
-	strategy, browserPath, err := chooseLoginStrategy()
-	if err != nil {
-		return "", err
+	preferred = strings.ToLower(preferred)
+	if preferred == "" {
+		if runtime.GOOS == "linux" {
+			preferred = "firefox"
+		} else {
+			preferred = "chromium"
+		}
 	}
 
-	switch strategy {
-	case loginStrategyChromium:
-		return runChromiumLogin(ctx, browserPath)
-	case loginStrategyFirefox:
-		return runFirefoxLogin(ctx)
+	switch preferred {
+	case "firefox":
+		path := findFirefoxBrowser()
+		if path == "" {
+			return "", fmt.Errorf("Firefox not found")
+		}
+		return runFirefoxLogin(ctx, path)
+	case "chromium", "chrome":
+		path := findChromiumBrowser()
+		if path == "" {
+			return "", fmt.Errorf("Chromium-based browser not found")
+		}
+		return runChromiumLogin(ctx, path)
 	default:
-		return "", fmt.Errorf("unsupported login strategy")
+		return "", fmt.Errorf("invalid -browser value %q (use \"firefox\" or \"chromium\")", preferred)
 	}
 }
 
@@ -70,8 +87,8 @@ func runChromiumLogin(ctx context.Context, browserPath string) (string, error) {
 	})
 }
 
-func runFirefoxLogin(ctx context.Context) (string, error) {
-	if err := openURL(loginURL); err != nil {
+func runFirefoxLogin(ctx context.Context, firefoxPath string) (string, error) {
+	if err := openFirefox(firefoxPath, loginURL); err != nil {
 		return "", fmt.Errorf("opening browser: %w", err)
 	}
 

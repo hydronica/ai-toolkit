@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,13 +16,6 @@ import (
 const (
 	cookieDBBusyRetries = 3
 	cookieDBBusyBackoff = 50 * time.Millisecond
-)
-
-type loginStrategy int
-
-const (
-	loginStrategyChromium loginStrategy = iota
-	loginStrategyFirefox
 )
 
 // chromiumExecNames are common Chromium-based browser binary names on PATH.
@@ -43,61 +35,8 @@ var chromiumExecNames = []string{
 	"opera",
 }
 
-// chooseLoginStrategy picks how to authenticate based on the system default
-// browser when possible, otherwise any installed Chromium browser, then Firefox.
-func chooseLoginStrategy() (loginStrategy, string, error) {
-	if name, execPath := defaultBrowser(); execPath != "" {
-		switch {
-		case isChromiumBrowser(name, execPath):
-			return loginStrategyChromium, execPath, nil
-		case isFirefoxBrowser(name, execPath):
-			return loginStrategyFirefox, execPath, nil
-		}
-	}
-
-	if path := findChromiumBrowser(); path != "" {
-		return loginStrategyChromium, path, nil
-	}
-
-	if findFirefoxBrowser() != "" {
-		return loginStrategyFirefox, "", nil
-	}
-
-	var noStrategy loginStrategy
-	return noStrategy, "", fmt.Errorf("no supported browser found (need Chrome, Chromium, Brave, Edge, or Firefox)")
-}
-
-func defaultBrowser() (desktopName, execPath string) {
-	switch runtime.GOOS {
-	case "linux":
-		return linuxDefaultBrowser()
-	default:
-		return "", ""
-	}
-}
-
-func linuxDefaultBrowser() (string, string) {
-	out, err := exec.Command("xdg-settings", "get", "default-web-browser").Output()
-	if err != nil {
-		return "", ""
-	}
-	desktop := strings.TrimSpace(string(out))
-	if desktop == "" {
-		return "", ""
-	}
-	execPath := desktopExecPath(findDesktopFile(desktop))
-	if execPath == "" {
-		execPath = guessExecFromDesktopName(desktop)
-	}
-	return desktop, execPath
-}
-
-func guessExecFromDesktopName(desktop string) string {
-	base := strings.ToLower(strings.TrimSuffix(desktop, ".desktop"))
-	for _, name := range append(chromiumExecNames, "firefox") {
-		if !strings.Contains(base, strings.TrimSuffix(name, "-stable")) {
-			continue
-		}
+func firstOnPath(names ...string) string {
+	for _, name := range names {
 		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
@@ -105,176 +44,62 @@ func guessExecFromDesktopName(desktop string) string {
 	return ""
 }
 
-func findDesktopFile(name string) string {
-	searchDirs := xdgDataDirs()
-	for _, dir := range searchDirs {
-		candidate := filepath.Join(dir, "applications", name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func xdgDataDirs() []string {
-	var dirs []string
-	if home := os.Getenv("HOME"); home != "" {
-		dirs = append(dirs, filepath.Join(home, ".local", "share"))
-	}
-	if dataHome := os.Getenv("XDG_DATA_HOME"); dataHome != "" {
-		dirs = append([]string{dataHome}, dirs...)
-	}
-	if dataDirs := os.Getenv("XDG_DATA_DIRS"); dataDirs != "" {
-		for _, dir := range strings.Split(dataDirs, ":") {
-			if dir != "" {
-				dirs = append(dirs, dir)
-			}
-		}
-	} else {
-		dirs = append(dirs, "/usr/local/share", "/usr/share")
-	}
-	if runtime.GOOS == "linux" {
-		dirs = append(dirs, "/var/lib/snapd/desktop")
-	}
-	return dirs
-}
-
-func desktopExecPath(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "Exec=") {
+func firstExisting(paths ...string) string {
+	for _, p := range paths {
+		if p == "" {
 			continue
 		}
-		return parseDesktopExec(strings.TrimPrefix(line, "Exec="))
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
 	return ""
 }
 
-// parseDesktopExec returns the executable from a .desktop Exec= value.
-func parseDesktopExec(execLine string) string {
-	exe := desktopExecArgv0(execLine)
-	if exe == "" {
-		return ""
-	}
-	if unquoted, err := strconv.Unquote(exe); err == nil {
-		exe = unquoted
-	}
-	if strings.ContainsRune(exe, '%') {
-		return ""
-	}
-	return exe
-}
-
-// desktopExecArgv0 returns the first argument from a .desktop Exec= value,
-// respecting quotes and escape sequences from the desktop entry spec.
-func desktopExecArgv0(execLine string) string {
-	execLine = strings.TrimSpace(execLine)
-	if execLine == "" {
-		return ""
-	}
-
-	var argv0 strings.Builder
-	i := 0
-	for i < len(execLine) {
-		switch execLine[i] {
-		case ' ', '\t':
-			return argv0.String()
-		case '"', '\'':
-			quote := execLine[i]
-			i++
-			for i < len(execLine) {
-				if execLine[i] == '\\' && i+1 < len(execLine) {
-					i++
-					argv0.WriteByte(unescapeDesktopExec(execLine[i]))
-					i++
-					continue
-				}
-				if execLine[i] == quote {
-					i++
-					break
-				}
-				argv0.WriteByte(execLine[i])
-				i++
-			}
-		case '\\':
-			if i+1 >= len(execLine) {
-				return argv0.String()
-			}
-			i++
-			argv0.WriteByte(unescapeDesktopExec(execLine[i]))
-			i++
-		default:
-			argv0.WriteByte(execLine[i])
-			i++
-		}
-	}
-	return argv0.String()
-}
-
-func unescapeDesktopExec(c byte) byte {
-	switch c {
-	case 's':
-		return ' '
-	case 'n':
-		return '\n'
-	case 't':
-		return '\t'
-	case 'r':
-		return '\r'
-	case '\\':
-		return '\\'
-	default:
-		return c
-	}
-}
-
-func isChromiumBrowser(desktopName, execPath string) bool {
-	joined := strings.ToLower(desktopName + " " + execPath + " " + filepath.Base(execPath))
-	for _, marker := range []string{
-		"chrome", "chromium", "brave", "edge", "msedge", "vivaldi", "opera",
-	} {
-		if strings.Contains(joined, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func isFirefoxBrowser(desktopName, execPath string) bool {
-	joined := strings.ToLower(desktopName + " " + execPath + " " + filepath.Base(execPath))
-	return strings.Contains(joined, "firefox")
-}
-
-// findFirefoxBrowser reports whether Firefox can be used for login, either via
-// a resolvable profile or a firefox executable on PATH.
+// findFirefoxBrowser returns the Firefox executable path if available.
+// Firefox creates a default profile on first run if none exists.
 func findFirefoxBrowser() string {
-	if _, err := firefoxCookiesPath(); err == nil {
-		return "profile"
+	if path := firstOnPath("firefox"); path != "" {
+		return path
 	}
-	path, err := exec.LookPath("firefox")
-	if err != nil {
-		return ""
+	return firstExisting(firefoxInstallPaths()...)
+}
+
+func firefoxInstallPaths() []string {
+	switch runtime.GOOS {
+	case "windows":
+		userProfile := os.Getenv("USERPROFILE")
+		return []string{
+			`C:\Program Files\Mozilla Firefox\firefox.exe`,
+			`C:\Program Files (x86)\Mozilla Firefox\firefox.exe`,
+			filepath.Join(userProfile, `AppData\Local\Mozilla Firefox\firefox.exe`),
+		}
+	case "darwin":
+		return []string{
+			"/Applications/Firefox.app/Contents/MacOS/firefox",
+		}
+	default:
+		return []string{
+			"/usr/bin/firefox",
+			"/snap/bin/firefox",
+			"/usr/lib/firefox/firefox",
+		}
 	}
-	return path
 }
 
 // findChromiumBrowser returns the path to a Chromium-compatible browser executable.
 func findChromiumBrowser() string {
-	for _, name := range chromiumExecNames {
-		if path, err := exec.LookPath(name); err == nil {
-			return path
-		}
+	if path := firstOnPath(chromiumExecNames...); path != "" {
+		return path
 	}
+	return firstExisting(chromiumInstallPaths()...)
+}
 
-	var candidates []string
+func chromiumInstallPaths() []string {
 	switch runtime.GOOS {
 	case "windows":
 		userProfile := os.Getenv("USERPROFILE")
-		candidates = []string{
+		return []string{
 			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
 			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
 			filepath.Join(userProfile, `AppData\Local\Google\Chrome\Application\chrome.exe`),
@@ -287,7 +112,7 @@ func findChromiumBrowser() string {
 		}
 	case "darwin":
 		userHome := os.Getenv("HOME")
-		candidates = []string{
+		return []string{
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
@@ -296,7 +121,7 @@ func findChromiumBrowser() string {
 			filepath.Join(userHome, "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
 		}
 	default:
-		candidates = []string{
+		return []string{
 			"/usr/bin/google-chrome",
 			"/usr/bin/google-chrome-stable",
 			"/usr/bin/brave-browser",
@@ -309,25 +134,15 @@ func findChromiumBrowser() string {
 			"/usr/bin/chromium-browser",
 		}
 	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
 }
 
-func openURL(url string) error {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", "", url)
-	case "darwin":
-		cmd = exec.Command("open", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
+// openFirefox launches Firefox with the given URL using the specified executable.
+func openFirefox(firefoxPath, url string) error {
+	if runtime.GOOS == "darwin" && strings.HasSuffix(firefoxPath, ".app/Contents/MacOS/firefox") {
+		appPath := strings.TrimSuffix(firefoxPath, "/Contents/MacOS/firefox")
+		return exec.Command("open", "-a", appPath, url).Start()
 	}
-	return cmd.Start()
+	return exec.Command(firefoxPath, url).Start()
 }
 
 func firefoxCookiesPath() (string, error) {

@@ -5,27 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/hydronica/trial"
 	_ "modernc.org/sqlite"
 )
-
-func TestParseDesktopExec(t *testing.T) {
-	fn := func(in string) (string, error) {
-		return parseDesktopExec(in), nil
-	}
-	cases := trial.Cases[string, string]{
-		"firefox snap":                {Input: "/snap/bin/firefox %u", Expected: "/snap/bin/firefox"},
-		"chromium with flags":         {Input: "/usr/bin/chromium --enable-features=foo %U", Expected: "/usr/bin/chromium"},
-		"quoted path":                 {Input: `"/opt/google/chrome" %U`, Expected: "/opt/google/chrome"},
-		"quoted path with spaces":     {Input: `"/opt/Google Chrome/google-chrome" %U`, Expected: "/opt/Google Chrome/google-chrome"},
-		"escaped space in path":       {Input: `/opt/Google\ Chrome/chrome %u`, Expected: "/opt/Google Chrome/chrome"},
-		"field code only":             {Input: "firefox %u", Expected: "firefox"},
-		"empty":                       {Input: "", Expected: ""},
-	}
-	trial.New(fn, cases).SubTest(t)
-}
 
 func TestFirefoxDefaultProfile(t *testing.T) {
 	fn := func(ini string) (string, error) {
@@ -68,46 +53,10 @@ Default=1
 	trial.New(fn, cases).SubTest(t)
 }
 
-type browserDetectInput struct {
-	desktopName string
-	execPath    string
-}
-
-func TestIsFirefoxBrowser(t *testing.T) {
-	fn := func(in browserDetectInput) (bool, error) {
-		return isFirefoxBrowser(in.desktopName, in.execPath), nil
-	}
-	cases := trial.Cases[browserDetectInput, bool]{
-		"firefox snap desktop": {
-			Input:    browserDetectInput{"firefox_firefox.desktop", "/snap/bin/firefox"},
-			Expected: true,
-		},
-		"chrome desktop": {
-			Input:    browserDetectInput{"google-chrome.desktop", "/usr/bin/google-chrome"},
-			Expected: false,
-		},
-	}
-	trial.New(fn, cases).SubTest(t)
-}
-
-func TestIsChromiumBrowser(t *testing.T) {
-	fn := func(in browserDetectInput) (bool, error) {
-		return isChromiumBrowser(in.desktopName, in.execPath), nil
-	}
-	cases := trial.Cases[browserDetectInput, bool]{
-		"chromium desktop": {
-			Input:    browserDetectInput{"chromium_chromium.desktop", "/usr/bin/chromium"},
-			Expected: true,
-		},
-		"firefox desktop": {
-			Input:    browserDetectInput{"firefox_firefox.desktop", "/snap/bin/firefox"},
-			Expected: false,
-		},
-	}
-	trial.New(fn, cases).SubTest(t)
-}
-
 func TestFirefoxCookiesPath(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("test manipulates HOME which only affects Linux Firefox paths")
+	}
 	fn := func(layout string) (string, error) {
 		home, err := os.MkdirTemp("", "cuse-home-*")
 		if err != nil {
@@ -162,54 +111,26 @@ Default=1
 }
 
 func TestFindFirefoxBrowser(t *testing.T) {
-	fn := func(layout string) (bool, error) {
+	if runtime.GOOS != "linux" {
+		t.Skip("test manipulates PATH which only affects Linux Firefox detection")
+	}
+
+	t.Run("no firefox binary on PATH or standard locations", func(t *testing.T) {
 		home, err := os.MkdirTemp("", "cuse-home-*")
 		if err != nil {
-			return false, err
+			t.Fatal(err)
 		}
 		defer os.RemoveAll(home)
 
-		switch layout {
-		case "profile without cookies":
-			base := filepath.Join(home, ".mozilla", "firefox")
-			profileDir := filepath.Join(base, "profiles", "abc.default")
-			if err := os.MkdirAll(profileDir, 0o755); err != nil {
-				return false, err
-			}
-			ini := `[Profile0]
-Name=default
-IsRelative=1
-Path=profiles/abc.default
-Default=1
-`
-			if err := os.WriteFile(filepath.Join(base, "profiles.ini"), []byte(ini), 0o600); err != nil {
-				return false, err
-			}
-		case "no profile":
-			oldPath := os.Getenv("PATH")
-			os.Setenv("PATH", filepath.Join(home, "empty-bin"))
-			defer os.Setenv("PATH", oldPath)
-		default:
-			return false, fmt.Errorf("unknown layout %q", layout)
+		oldPath := os.Getenv("PATH")
+		os.Setenv("PATH", filepath.Join(home, "empty-bin"))
+		defer os.Setenv("PATH", oldPath)
+
+		got := findFirefoxBrowser()
+		if got != "" {
+			t.Errorf("expected empty string when no Firefox found, got %q", got)
 		}
-
-		oldHome := os.Getenv("HOME")
-		os.Setenv("HOME", home)
-		defer os.Setenv("HOME", oldHome)
-
-		return findFirefoxBrowser() != "", nil
-	}
-	cases := trial.Cases[string, bool]{
-		"fresh profile without cookies database": {
-			Input:    "profile without cookies",
-			Expected: true,
-		},
-		"no profile and no firefox binary": {
-			Input:    "no profile",
-			Expected: false,
-		},
-	}
-	trial.New(fn, cases).SubTest(t)
+	})
 }
 
 func TestReadFirefoxCookie(t *testing.T) {
