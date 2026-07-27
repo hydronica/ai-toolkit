@@ -3,9 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
@@ -19,13 +18,44 @@ const (
 	pollInterval = time.Second
 )
 
-// runLogin opens a visible Chrome or Edge window and waits for the user to
-// authenticate on cursor.com. Once WorkosCursorSessionToken appears in the
-// browser's cookies the raw value is returned (without the cookie name prefix).
-// The context should carry cancellation from the caller (e.g. Ctrl-C).
-func runLogin(ctx context.Context) (string, error) {
+// runLogin opens the system browser and waits for the user to authenticate on
+// cursor.com. Once WorkosCursorSessionToken appears in the browser's cookies the
+// raw value is returned (without the cookie name prefix). The context should
+// carry cancellation from the caller (e.g. Ctrl-C).
+//
+// preferred selects the browser: "firefox" or "chromium"/"chrome". Empty defaults
+// to Firefox on Linux and Chromium elsewhere (no cross-browser fallback).
+func runLogin(ctx context.Context, preferred string) (string, error) {
 	fmt.Println("Opening browser — please log in at cursor.com...")
 
+	preferred = strings.ToLower(preferred)
+	if preferred == "" {
+		if runtime.GOOS == "linux" {
+			preferred = "firefox"
+		} else {
+			preferred = "chromium"
+		}
+	}
+
+	switch preferred {
+	case "firefox":
+		path := findFirefoxBrowser()
+		if path == "" {
+			return "", fmt.Errorf("Firefox not found")
+		}
+		return runFirefoxLogin(ctx, path)
+	case "chromium", "chrome":
+		path := findChromiumBrowser()
+		if path == "" {
+			return "", fmt.Errorf("Chromium-based browser not found")
+		}
+		return runChromiumLogin(ctx, path)
+	default:
+		return "", fmt.Errorf("invalid -browser value %q (use \"firefox\" or \"chromium\")", preferred)
+	}
+}
+
+func runChromiumLogin(ctx context.Context, browserPath string) (string, error) {
 	// Build allocator options from scratch rather than inheriting
 	// DefaultExecAllocatorOptions so that automation-detection flags
 	// (--enable-automation, --disable-blink-features=AutomationControlled,
@@ -39,11 +69,7 @@ func runLogin(ctx context.Context) (string, error) {
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("disable-setuid-sandbox", true),
 		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-	}
-
-	// Prefer Chrome; fall back to Edge on Windows.
-	if browserPath := findBrowser(); browserPath != "" {
-		opts = append(opts, chromedp.ExecPath(browserPath))
+		chromedp.ExecPath(browserPath),
 	}
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
@@ -56,6 +82,30 @@ func runLogin(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("opening browser: %w", err)
 	}
 
+	return waitForLoginCookie(ctx, func() (string, error) {
+		return extractChromiumCookie(taskCtx)
+	})
+}
+
+func runFirefoxLogin(ctx context.Context, firefoxPath string) (string, error) {
+	if err := openFirefox(firefoxPath, loginURL); err != nil {
+		return "", fmt.Errorf("opening browser: %w", err)
+	}
+
+	return waitForLoginCookie(ctx, func() (string, error) {
+		cookiesPath, err := firefoxCookiesPath()
+		if err != nil {
+			return "", nil
+		}
+		cookie, err := readFirefoxCookie(cookiesPath)
+		if err != nil {
+			return "", fmt.Errorf("reading cookies: %w", err)
+		}
+		return cookie, nil
+	})
+}
+
+func waitForLoginCookie(ctx context.Context, readCookie func() (string, error)) (string, error) {
 	deadline := time.Now().Add(loginTimeout)
 	for time.Now().Before(deadline) {
 		select {
@@ -64,9 +114,9 @@ func runLogin(ctx context.Context) (string, error) {
 		default:
 		}
 
-		cookie, err := extractCookie(taskCtx)
+		cookie, err := readCookie()
 		if err != nil {
-			return "", fmt.Errorf("reading cookies: %w", err)
+			return "", err
 		}
 		if cookie != "" {
 			return cookie, nil
@@ -77,9 +127,9 @@ func runLogin(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("timed out after %s waiting for login", loginTimeout)
 }
 
-// extractCookie reads WorkosCursorSessionToken from the browser cookie store.
+// extractChromiumCookie reads WorkosCursorSessionToken from a CDP browser.
 // Returns an empty string when the cookie is not yet present.
-func extractCookie(ctx context.Context) (string, error) {
+func extractChromiumCookie(ctx context.Context) (string, error) {
 	var cookies []*network.Cookie
 	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var innerErr error
@@ -95,53 +145,4 @@ func extractCookie(ctx context.Context) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-// findBrowser returns the path to a Chromium-compatible browser executable.
-// Priority: Chrome > Brave > Edge. Returns "" if none found (chromedp will
-// then fall back to its own PATH search).
-func findBrowser() string {
-	var candidates []string
-	if runtime.GOOS == "windows" {
-		userProfile := os.Getenv("USERPROFILE")
-		candidates = []string{
-			// Chrome — system-wide and per-user
-			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
-			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
-			filepath.Join(userProfile, `AppData\Local\Google\Chrome\Application\chrome.exe`),
-			// Brave — system-wide and per-user
-			`C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe`,
-			`C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe`,
-			filepath.Join(userProfile, `AppData\Local\BraveSoftware\Brave-Browser\Application\brave.exe`),
-			// Edge — last resort
-			`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
-			`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
-			filepath.Join(userProfile, `AppData\Local\Microsoft\Edge\Application\msedge.exe`),
-		}
-	} else if runtime.GOOS == "darwin" {
-		userHome := os.Getenv("HOME")
-		candidates = []string{
-			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-			filepath.Join(userHome, "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-			filepath.Join(userHome, "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
-		}
-	} else {
-		// Linux
-		candidates = []string{
-			"/usr/bin/google-chrome",
-			"/usr/bin/google-chrome-stable",
-			"/usr/bin/brave-browser",
-			"/usr/bin/brave-browser-stable",
-			"/snap/bin/chromium",
-			"/usr/bin/chromium",
-			"/usr/bin/chromium-browser",
-		}
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return ""
 }

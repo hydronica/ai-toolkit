@@ -9,122 +9,110 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/hydronica/trial"
 )
 
 func TestFormatTimeRemaining(t *testing.T) {
-	tests := []struct {
-		name      string
-		remaining time.Duration
-		want      string
-	}{
-		{"zero", 0, "0 min"},
-		{"negative", -time.Hour, "0 min"},
-		{"days only", 12 * 24 * time.Hour, "12 days"},
-		{"one day over 48h", 50 * time.Hour, "2 days"},
-		{"just over 48h", 49 * time.Hour, "2 days"},
-		{"48h middle tier", 48 * time.Hour, "2 days"},
-		{"days and hours", 30 * time.Hour, "1 day 6 hr"},
-		{"hours only middle tier", 18 * time.Hour, "18 hr"},
-		{"12h middle tier", 12 * time.Hour, "12 hr"},
-		{"hours and minutes", 5*time.Hour + 15*time.Minute, "5 hr 15 min"},
-		{"minutes only", 45 * time.Minute, "45 min"},
-		{"one hour", time.Hour, "1 hr"},
-		{"one minute", time.Minute, "1 min"},
+	fn := func(remaining time.Duration) (string, error) {
+		return formatTimeRemaining(remaining), nil
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := formatTimeRemaining(tt.remaining); got != tt.want {
-				t.Fatalf("formatTimeRemaining(%v) = %q, want %q", tt.remaining, got, tt.want)
-			}
-		})
+	cases := trial.Cases[time.Duration, string]{
+		"zero":                   {Input: 0, Expected: "0 min"},
+		"negative":               {Input: -time.Hour, Expected: "0 min"},
+		"days only":              {Input: 12 * 24 * time.Hour, Expected: "12 days"},
+		"one day over 48h":       {Input: 50 * time.Hour, Expected: "2 days"},
+		"just over 48h":          {Input: 49 * time.Hour, Expected: "2 days"},
+		"48h middle tier":        {Input: 48 * time.Hour, Expected: "2 days"},
+		"days and hours":         {Input: 30 * time.Hour, Expected: "1 day 6 hr"},
+		"hours only middle tier": {Input: 18 * time.Hour, Expected: "18 hr"},
+		"12h middle tier":        {Input: 12 * time.Hour, Expected: "12 hr"},
+		"hours and minutes":      {Input: 5*time.Hour + 15*time.Minute, Expected: "5 hr 15 min"},
+		"minutes only":           {Input: 45 * time.Minute, Expected: "45 min"},
+		"one hour":               {Input: time.Hour, Expected: "1 hr"},
+		"one minute":             {Input: time.Minute, Expected: "1 min"},
 	}
+	trial.New(fn, cases).SubTest(t)
 }
 
 func TestFormatDollars(t *testing.T) {
-	tests := []struct {
-		cents float64
-		want  string
-	}{
-		{0, "$0.00"},
-		{99, "$0.99"},
-		{200000, "$2,000.00"},
-		{1234567, "$12,345.67"},
-		{-200000, "-$2,000.00"},
+	fn := func(cents float64) (string, error) {
+		return formatDollars(cents), nil
 	}
-
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%.0f", tt.cents), func(t *testing.T) {
-			if got := formatDollars(tt.cents); got != tt.want {
-				t.Fatalf("formatDollars(%v) = %q, want %q", tt.cents, got, tt.want)
-			}
-		})
+	cases := trial.Cases[float64, string]{
+		"zero":      {Input: 0, Expected: "$0.00"},
+		"99 cents":  {Input: 99, Expected: "$0.99"},
+		"thousands": {Input: 200000, Expected: "$2,000.00"},
+		"large":     {Input: 1234567, Expected: "$12,345.67"},
+		"negative":  {Input: -200000, Expected: "-$2,000.00"},
 	}
+	trial.New(fn, cases).SubTest(t)
 }
 
 func TestRequestUsed(t *testing.T) {
-	tests := []struct {
-		name string
-		r    *UsageResult
-		want float64
-	}{
-		{
-			name: "fallback to plan used",
-			r:    &UsageResult{RequestsUsed: 1124, RequestsLimit: 2000},
-			want: 1124,
+	fn := func(r *UsageResult) (float64, error) {
+		return requestUsed(r), nil
+	}
+	cases := trial.Cases[*UsageResult, float64]{
+		"fallback to plan used": {
+			Input:    &UsageResult{RequestsUsed: 1124, RequestsLimit: 2000},
+			Expected: 1124,
 		},
-		{
-			name: "uses breakdown total",
-			r: &UsageResult{
+		"uses breakdown total": {
+			Input: &UsageResult{
 				RequestsUsed:           2000,
 				RequestsLimit:          2000,
 				RequestsBreakdownTotal: floatPtr(2386),
 			},
-			want: 2386,
+			Expected: 2386,
 		},
 	}
+	trial.New(fn, cases).SubTest(t)
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := requestUsed(tt.r); got != tt.want {
-				t.Fatalf("requestUsed() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+type requestPercentInput struct {
+	used  float64
+	limit float64
 }
 
 func TestRequestPercent(t *testing.T) {
-	tests := []struct {
-		used, limit float64
-		want        float64
-	}{
-		{1124, 2000, 56.2},
-		{2500, 2000, 125.0},
-		{0, 2000, 0},
-		{100, 0, 0},
+	fn := func(in requestPercentInput) (float64, error) {
+		return requestPercent(in.used, in.limit), nil
 	}
+	cases := trial.Cases[requestPercentInput, float64]{
+		"under limit": {Input: requestPercentInput{1124, 2000}, Expected: 56.2},
+		"over limit":  {Input: requestPercentInput{2500, 2000}, Expected: 125.0},
+		"zero used":   {Input: requestPercentInput{0, 2000}, Expected: 0},
+		"zero limit":  {Input: requestPercentInput{100, 0}, Expected: 0},
+	}
+	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
+		got := actual.(float64)
+		want := expected.(float64)
+		if math.Abs(got-want) <= 0.05 {
+			return true, ""
+		}
+		return false, fmt.Sprintf("got %v want %v", got, want)
+	}).SubTest(t)
+}
 
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%.0f/%.0f", tt.used, tt.limit), func(t *testing.T) {
-			got := requestPercent(tt.used, tt.limit)
-			if math.Abs(got-tt.want) > 0.05 {
-				t.Fatalf("requestPercent(%v, %v) = %v, want %v", tt.used, tt.limit, got, tt.want)
-			}
-		})
-	}
+type parseUsageOutput struct {
+	result *UsageResult
+	output string
 }
 
 func TestParseUsageAndOutput(t *testing.T) {
-	tests := []struct {
-		name       string
-		body       string
-		want       *UsageResult
-		wantOutput string
-	}{
-		{
-			name: "on_demand_enabled",
-			body: `{
+	fn := func(body string) (parseUsageOutput, error) {
+		got, err := parseUsage([]byte(body))
+		if err != nil {
+			return parseUsageOutput{}, err
+		}
+		return parseUsageOutput{
+			result: got,
+			output: capturePrintTable(got),
+		}, nil
+	}
+	cases := trial.Cases[string, parseUsageOutput]{
+		"on_demand_enabled": {
+			Input: `{
 				"membershipType": "enterprise",
 				"individualUsage": {
 					"plan": {
@@ -140,17 +128,18 @@ func TestParseUsageAndOutput(t *testing.T) {
 					}
 				}
 			}`,
-			want: &UsageResult{
-				MembershipType:  "enterprise",
-				TotalPercent:    56.2,
-				AutoPercent:     0,
-				APIPercent:      100,
-				RequestsUsed:    1124,
-				RequestsLimit:   2000,
-				OnDemandEnabled: true,
-				OnDemandUsed:    200000,
-			},
-			wantOutput: `Cursor usage
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					MembershipType:  "enterprise",
+					TotalPercent:    56.2,
+					AutoPercent:     0,
+					APIPercent:      100,
+					RequestsUsed:    1124,
+					RequestsLimit:   2000,
+					OnDemandEnabled: true,
+					OnDemandUsed:    200000,
+				},
+				output: `Cursor usage
 -------------
 Billing period:  — → —
 Plan:            enterprise
@@ -162,10 +151,10 @@ Total usage:
 On-demand:       $2,000.00 spent
 
 `,
+			},
 		},
-		{
-			name: "on_demand_disabled",
-			body: `{
+		"on_demand_disabled": {
+			Input: `{
 				"membershipType": "pro",
 				"individualUsage": {
 					"plan": {
@@ -181,15 +170,16 @@ On-demand:       $2,000.00 spent
 					}
 				}
 			}`,
-			want: &UsageResult{
-				MembershipType:  "pro",
-				TotalPercent:    30.4,
-				AutoPercent:     42.5,
-				APIPercent:      18.3,
-				RequestsUsed:    350,
-				OnDemandEnabled: false,
-			},
-			wantOutput: `Cursor usage
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					MembershipType:  "pro",
+					TotalPercent:    30.4,
+					AutoPercent:     42.5,
+					APIPercent:      18.3,
+					RequestsUsed:    350,
+					OnDemandEnabled: false,
+				},
+				output: `Cursor usage
 -------------
 Billing period:  — → —
 Plan:            pro
@@ -200,10 +190,10 @@ Total usage:
 On-demand:       Disabled
 
 `,
+			},
 		},
-		{
-			name: "team_usage_nested_on_demand",
-			body: `{
+		"team_usage_nested_on_demand": {
+			Input: `{
 				"membershipType": "enterprise",
 				"individualUsage": {
 					"plan": {
@@ -227,23 +217,24 @@ On-demand:       Disabled
 					}
 				}
 			}`,
-			want: &UsageResult{
-				MembershipType:  "enterprise",
-				TotalPercent:    40,
-				AutoPercent:     10,
-				APIPercent:      25,
-				RequestsUsed:    800,
-				RequestsLimit:   2000,
-				OnDemandEnabled: true,
-				OnDemandUsed:    200000,
-				Team: &TeamUsageInfo{
-					Enabled:   true,
-					Used:      50000,
-					Limit:     floatPtr(100000),
-					Remaining: floatPtr(50000),
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					MembershipType:  "enterprise",
+					TotalPercent:    40,
+					AutoPercent:     10,
+					APIPercent:      25,
+					RequestsUsed:    800,
+					RequestsLimit:   2000,
+					OnDemandEnabled: true,
+					OnDemandUsed:    200000,
+					Team: &TeamUsageInfo{
+						Enabled:   true,
+						Used:      50000,
+						Limit:     floatPtr(100000),
+						Remaining: floatPtr(50000),
+					},
 				},
-			},
-			wantOutput: `Cursor usage
+				output: `Cursor usage
 -------------
 Billing period:  — → —
 Plan:            enterprise
@@ -259,10 +250,10 @@ Team usage:      $500.00 spent
   Remaining:     $500.00
 
 `,
+			},
 		},
-		{
-			name: "breakdown_total_for_requests",
-			body: `{
+		"breakdown_total_for_requests": {
+			Input: `{
 				"membershipType": "pro",
 				"individualUsage": {
 					"plan": {
@@ -283,17 +274,18 @@ Team usage:      $500.00 spent
 					}
 				}
 			}`,
-			want: &UsageResult{
-				MembershipType:         "pro",
-				TotalPercent:           12.24,
-				AutoPercent:            0,
-				APIPercent:             53.02,
-				RequestsUsed:           2000,
-				RequestsLimit:          2000,
-				RequestsBreakdownTotal: floatPtr(2386),
-				OnDemandEnabled:        false,
-			},
-			wantOutput: `Cursor usage
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					MembershipType:         "pro",
+					TotalPercent:           12.24,
+					AutoPercent:            0,
+					APIPercent:             53.02,
+					RequestsUsed:           2000,
+					RequestsLimit:          2000,
+					RequestsBreakdownTotal: floatPtr(2386),
+					OnDemandEnabled:        false,
+				},
+				output: `Cursor usage
 -------------
 Billing period:  — → —
 Plan:            pro
@@ -305,16 +297,18 @@ Total usage:
 On-demand:       Disabled
 
 `,
+			},
 		},
-		{
-			body: `{
+		"free plan without individual usage": {
+			Input: `{
 				"membershipType": "free",
 				"individualUsage": false
 			}`,
-			want: &UsageResult{
-				MembershipType: "free",
-			},
-			wantOutput: `Cursor usage
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					MembershipType: "free",
+				},
+				output: `Cursor usage
 -------------
 Billing period:  — → —
 Plan:            free
@@ -325,25 +319,10 @@ Total usage:
 On-demand:       Disabled
 
 `,
+			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseUsage([]byte(tt.body))
-			if err != nil {
-				t.Fatalf("parseUsage: %v", err)
-			}
-			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Fatalf("parseUsage mismatch (-want +got):\n%s", diff)
-			}
-
-			output := capturePrintTable(got)
-			if output != tt.wantOutput {
-				t.Fatalf("printTable output mismatch\n--- got ---\n%s--- want ---\n%s", output, tt.wantOutput)
-			}
-		})
-	}
+	trial.New(fn, cases).SubTest(t)
 }
 
 func floatPtr(v float64) *float64 {
