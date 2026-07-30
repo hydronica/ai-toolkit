@@ -1,0 +1,53 @@
+# Copy to config.toml and fill in your connection details.
+# Override the path with -config or DB_QUERY_CONFIG.
+
+[[databases]]
+name = "maindb"
+type = "oracle"
+connection = "oracle://user:password@host:1521/SERVICE"
+
+[[databases]]
+name = "iap"
+type = "postgres"
+host = "postgres.example.com"
+db = "iap"
+username = "srv-iap"
+password = "secret"
+sslmode = "require"
+sslcert = "./certs/postgresql.crt"
+sslkey = "./certs/postgresql.key"
+sslrootcert = "./certs/root.crt"
+# Cloud SQL via private DNS: server cert CN often differs from the connect hostname
+# ssl_skip_hostname_verify = true
+
+[[databases]]
+name = "warehouse"
+type = "bigquery"
+project = "my-gcp-project"
+dataset = "analytics"
+# Local dev: use gcloud application-default credentials (no service account file)
+auth = "adc"
+
+# Production / signal-api style service account auth:
+# auth = "service_account"
+# credentials = "/path/to/service-account.json"
+# bq-project, bq-dataset, and bq-auth also work as field names
+
+[[databases]]
+name = "reporting"
+type = "mongo"
+uri = "mongodb://user:password@host:27017/reporting_dev?authSource=admin"
+db_name = "reporting_dev"
+
+[[databases]]
+name = "local"
+type = "sqlite"
+db = "./data/app.sqlite"
+
+[[databases]]
+name = "analytics"
+type = "mysql"
+host = "mysql.example.com"
+db = "analytics"
+username = "reader"
+password = "secret"

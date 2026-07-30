@@ -1,0 +1,6 @@
+config.toml
+bq-auth.json
+postgresql.crt
+postgresql.key
+root.crt
+bin/

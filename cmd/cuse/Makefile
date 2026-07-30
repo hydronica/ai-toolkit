@@ -1,5 +1,5 @@
 VERSION := $(shell git describe --tags --always --dirty)
-OUTPUT := ../scripts/cuse
+OUTPUT := ../../scripts/cuse
 
 .PHONY: build clean
 

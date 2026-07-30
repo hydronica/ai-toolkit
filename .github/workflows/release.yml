@@ -15,12 +15,12 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version-file: cuse/go.mod
-          cache-dependency-path: cuse/go.sum
+          go-version-file: cmd/cuse/go.mod
+          cache-dependency-path: cmd/cuse/go.sum
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean
-          workdir: ./cuse
+          workdir: ./cmd/cuse
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
