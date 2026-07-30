@@ -1,102 +1,63 @@
 package db
 
 import (
-	"strings"
+	"errors"
 	"testing"
 
+	"github.com/hydronica/trial"
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-func TestValidateMongoQuery(t *testing.T) {
-	tests := []struct {
-		name    string
-		query   mongoQuery
-		wantErr string
-	}{
-		{
-			name: "allows read-only aggregate",
-			query: mongoQuery{
+func Test_validateMongoQuery(t *testing.T) {
+	fn := func(query mongoQuery) (struct{}, error) {
+		return struct{}{}, validateMongoQuery(&query)
+	}
+	cases := trial.Cases[mongoQuery, struct{}]{
+		"allows read-only aggregate": {
+			Input: mongoQuery{
 				Collection: "jobs",
 				Pipeline:   []bson.M{{"$match": map[string]interface{}{"status": "done"}}},
 			},
 		},
-		{
-			name: "rejects write stage $out",
-			query: mongoQuery{
+		"rejects write stage $out": {
+			Input: mongoQuery{
 				Collection: "jobs",
 				Pipeline:   []bson.M{{"$out": "other"}},
 			},
-			wantErr: `$out`,
+			ExpectedErr: errors.New(`$out`),
 		},
-		{
-			name: "rejects write stage $merge",
-			query: mongoQuery{
+		"rejects write stage $merge": {
+			Input: mongoQuery{
 				Collection: "jobs",
 				Pipeline:   []bson.M{{"$merge": "other"}},
 			},
-			wantErr: `$merge`,
+			ExpectedErr: errors.New(`$merge`),
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateMongoQuery(&tt.query)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Fatalf("validateMongoQuery() error = %v, want nil", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("validateMongoQuery() = nil, want error containing %q", tt.wantErr)
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("validateMongoQuery() error = %q, want substring %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
+	trial.New(fn, cases).SubTest(t)
 }
 
-func TestParseMongoQuery(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantErr string
-	}{
-		{
-			name:  "parses find query",
-			input: `{"collection":"Report","filter":{"status":"active"}}`,
+func Test_parseMongoQuery(t *testing.T) {
+	fn := func(input string) (string, error) {
+		got, err := parseMongoQuery(input)
+		if err != nil {
+			return "", err
+		}
+		return got.Collection, nil
+	}
+	cases := trial.Cases[string, string]{
+		"parses find query": {
+			Input:    `{"collection":"Report","filter":{"status":"active"}}`,
+			Expected: "Report",
 		},
-		{
-			name:    "requires collection",
-			input:   `{"filter":{}}`,
-			wantErr: "collection",
+		"requires collection": {
+			Input:       `{"filter":{}}`,
+			ExpectedErr: errors.New("collection"),
 		},
-		{
-			name:    "requires json",
-			input:   `not json`,
-			wantErr: "JSON",
+		"requires json": {
+			Input:       `not json`,
+			ExpectedErr: errors.New("JSON"),
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseMongoQuery(tt.input)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Fatalf("parseMongoQuery(%q) error = %v", tt.input, err)
-				}
-				if got.Collection == "" {
-					t.Fatalf("parseMongoQuery(%q) collection = empty, want non-empty", tt.input)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("parseMongoQuery(%q) = %+v, want error", tt.input, got)
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("parseMongoQuery() error = %q, want substring %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
+	trial.New(fn, cases).SubTest(t)
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestRunnerListCollectionsRequiresMongo(t *testing.T) {
+func TestRunner_ListCollections(t *testing.T) {
 	r := &Runner{}
 	_, err := r.ListCollections(context.Background())
 	if err == nil {

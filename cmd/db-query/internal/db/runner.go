@@ -7,6 +7,19 @@ import (
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
 )
 
+// QueryOptions controls per-query execution. Dataset applies to BigQuery only.
+type QueryOptions struct {
+	Limit   int
+	Dataset string
+}
+
+type QueryOutput struct {
+	Columns   []string                 `json:"columns"`
+	Rows      []map[string]interface{} `json:"rows"`
+	RowCount  int                      `json:"row_count"`
+	Truncated bool                     `json:"truncated,omitempty"`
+}
+
 type Runner struct {
 	sql       *sqlRunner
 	bigquery  *bigqueryRunner

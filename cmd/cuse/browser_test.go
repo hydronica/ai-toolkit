@@ -128,7 +128,7 @@ func TestFindFirefoxBrowser(t *testing.T) {
 
 		got := findFirefoxBrowser()
 		if got != "" {
-			t.Errorf("expected empty string when no Firefox found, got %q", got)
+			t.Fatalf("findFirefoxBrowser() = %q, want empty string when no Firefox found", got)
 		}
 	})
 }

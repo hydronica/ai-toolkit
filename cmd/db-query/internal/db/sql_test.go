@@ -8,106 +8,108 @@ import (
 	"testing"
 
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
+	"github.com/hydronica/trial"
 
 	_ "modernc.org/sqlite"
 )
 
-func TestSQLConnectionDetails(t *testing.T) {
-	tests := []struct {
-		name         string
-		dbCfg        config.Database
-		wantDriver   string
-		wantDSN      string
-		wantContains []string
-		wantErr      bool
-	}{
-		{
-			name: "mysql builds tcp dsn with default port",
-			dbCfg: config.Database{
+type sqlConnResult struct {
+	Driver   string
+	DSN      string
+	Contains []string
+}
+
+func Test_sqlConnectionDetails(t *testing.T) {
+	fn := func(dbCfg config.Database) (sqlConnResult, error) {
+		driver, dsn, err := sqlConnectionDetails(&dbCfg)
+		if err != nil {
+			return sqlConnResult{}, err
+		}
+		return sqlConnResult{Driver: driver, DSN: dsn}, nil
+	}
+	cases := trial.Cases[config.Database, sqlConnResult]{
+		"mysql builds tcp dsn with default port": {
+			Input: config.Database{
 				Type:     "mysql",
 				Host:     "db.example.com",
 				DB:       "app",
 				Username: "reader",
 				Password: "secret",
 			},
-			wantDriver: "mysql",
-			wantDSN:    "reader:secret@tcp(db.example.com:3306)/app",
+			Expected: sqlConnResult{
+				Driver: "mysql",
+				DSN:    "reader:secret@tcp(db.example.com:3306)/app",
+			},
 		},
-		{
-			name: "mysql preserves explicit host port",
-			dbCfg: config.Database{
+		"mysql preserves explicit host port": {
+			Input: config.Database{
 				Type:     "mysql",
 				Host:     "db.example.com:3307",
 				DB:       "app",
 				Username: "reader",
 			},
-			wantDriver: "mysql",
-			wantContains: []string{
-				"reader@tcp(db.example.com:3307)/app",
-				"parseTime=true",
+			Expected: sqlConnResult{
+				Driver: "mysql",
+				Contains: []string{
+					"reader@tcp(db.example.com:3307)/app",
+					"parseTime=true",
+				},
 			},
 		},
-		{
-			name: "sqlite builds read-only file dsn",
-			dbCfg: config.Database{
+		"sqlite builds read-only file dsn": {
+			Input: config.Database{
 				Type: "sqlite",
 				DB:   "./data/app.sqlite",
 			},
-			wantDriver: "sqlite",
-			wantDSN:    "file:./data/app.sqlite?mode=ro",
+			Expected: sqlConnResult{
+				Driver: "sqlite",
+				DSN:    "file:./data/app.sqlite?mode=ro",
+			},
 		},
-		{
-			name: "sqlite uses in-memory read-only dsn",
-			dbCfg: config.Database{
+		"sqlite uses in-memory read-only dsn": {
+			Input: config.Database{
 				Type: "sqlite",
 				DB:   ":memory:",
 			},
-			wantDriver: "sqlite",
-			wantDSN:    "file::memory:?mode=ro",
+			Expected: sqlConnResult{
+				Driver: "sqlite",
+				DSN:    "file::memory:?mode=ro",
+			},
 		},
-		{
-			name: "sqlite uses connection override",
-			dbCfg: config.Database{
+		"sqlite uses connection override": {
+			Input: config.Database{
 				Type:       "sqlite",
 				DB:         "./ignored.sqlite",
 				Connection: "file:/tmp/custom.sqlite?mode=ro&cache=shared",
 			},
-			wantDriver: "sqlite",
-			wantDSN:    "file:/tmp/custom.sqlite?mode=ro&cache=shared",
+			Expected: sqlConnResult{
+				Driver: "sqlite",
+				DSN:    "file:/tmp/custom.sqlite?mode=ro&cache=shared",
+			},
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			driver, dsn, err := sqlConnectionDetails(&tt.dbCfg)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("sqlConnectionDetails() = nil, want error")
-				}
-				return
+	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
+		got := actual.(sqlConnResult)
+		want := expected.(sqlConnResult)
+		if got.Driver != want.Driver {
+			return false, "driver mismatch"
+		}
+		if want.DSN != "" && !strings.HasPrefix(got.DSN, want.DSN) {
+			return false, "dsn prefix mismatch"
+		}
+		for _, sub := range want.Contains {
+			if !strings.Contains(got.DSN, sub) {
+				return false, "dsn missing substring"
 			}
-			if err != nil {
-				t.Fatalf("sqlConnectionDetails() error = %v", err)
-			}
-			if driver != tt.wantDriver {
-				t.Fatalf("driver = %q, want %q", driver, tt.wantDriver)
-			}
-			if tt.wantDSN != "" && !strings.HasPrefix(dsn, tt.wantDSN) {
-				t.Fatalf("dsn = %q, want prefix %q", dsn, tt.wantDSN)
-			}
-			for _, want := range tt.wantContains {
-				if !strings.Contains(dsn, want) {
-					t.Fatalf("dsn = %q, want substring %q", dsn, want)
-				}
-			}
-			if tt.dbCfg.Type == "mysql" && tt.wantDSN != "" && !strings.Contains(dsn, "parseTime=true") {
-				t.Fatalf("dsn = %q, want parseTime=true", dsn)
-			}
-		})
-	}
+		}
+		if want.Driver == "mysql" && want.DSN != "" && !strings.Contains(got.DSN, "parseTime=true") {
+			return false, "dsn missing parseTime=true"
+		}
+		return true, ""
+	}).SubTest(t)
 }
 
-func TestSQLiteConnectAndQuery(t *testing.T) {
+func TestConnect_SQLite(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "test.sqlite")
 
@@ -134,9 +136,9 @@ func TestSQLiteConnectAndQuery(t *testing.T) {
 		t.Fatalf("RunQuery() error = %v", err)
 	}
 	if output.RowCount != 1 {
-		t.Fatalf("RowCount = %d, want 1", output.RowCount)
+		t.Fatalf("RunQuery() RowCount = %d, want 1", output.RowCount)
 	}
 	if got := output.Rows[0]["name"]; got != "alice" {
-		t.Fatalf("name = %v, want alice", got)
+		t.Fatalf("RunQuery() name = %v, want alice", got)
 	}
 }
