@@ -29,9 +29,9 @@ func connectSQL(ctx context.Context, dbCfg *config.Database) (*sqlRunner, error)
 		return nil, err
 	}
 
-	db, err := sqlx.Connect(driver, dsn)
+	db, err := sqlx.Open(driver, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
+		return nil, fmt.Errorf("open: %w", err)
 	}
 
 	if dbCfg.Type == "oracle" {
@@ -40,7 +40,7 @@ func connectSQL(ctx context.Context, dbCfg *config.Database) (*sqlRunner, error)
 
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("ping: %w", err)
+		return nil, fmt.Errorf("connect: %w", err)
 	}
 
 	return &sqlRunner{db: db}, nil
@@ -106,7 +106,7 @@ func sqlConnectionDetails(dbCfg *config.Database) (driver, dsn string, err error
 		return "mysql", mysqlDSN(dbCfg), nil
 	case "sqlite":
 		if conn := strings.TrimSpace(dbCfg.Connection); conn != "" {
-			return "sqlite", conn, nil
+			return "sqlite", sqliteConnectionDSN(conn), nil
 		}
 		return "sqlite", sqliteDSN(dbCfg), nil
 	default:
@@ -158,24 +158,53 @@ func mysqlDSN(dbCfg *config.Database) string {
 }
 
 func sqliteDSN(dbCfg *config.Database) string {
-	path := strings.TrimSpace(dbCfg.DB)
-	if path == ":memory:" {
-		return "file::memory:?mode=ro"
+	return sqliteConnectionDSN(strings.TrimSpace(dbCfg.DB))
+}
+
+func sqliteConnectionDSN(conn string) string {
+	conn = strings.TrimSpace(conn)
+	switch {
+	case conn == ":memory:":
+		return ensureSQLiteReadOnly("file::memory:")
+	case strings.HasPrefix(conn, "file:"):
+		return ensureSQLiteReadOnly(conn)
+	default:
+		return ensureSQLiteReadOnly("file:" + conn)
 	}
-	if strings.HasPrefix(path, "file:") {
-		return ensureSQLiteReadOnly(path)
-	}
-	return ensureSQLiteReadOnly("file:" + path)
 }
 
 func ensureSQLiteReadOnly(dsn string) string {
-	if strings.Contains(dsn, "mode=") {
-		return dsn
+	dsn = strings.TrimSpace(dsn)
+	sep := strings.IndexByte(dsn, '?')
+	if sep < 0 {
+		return dsn + "?mode=ro"
 	}
-	if strings.Contains(dsn, "?") {
-		return dsn + "&mode=ro"
+	return dsn[:sep] + "?" + setSQLiteModeReadOnly(dsn[sep+1:])
+}
+
+func setSQLiteModeReadOnly(query string) string {
+	if query == "" {
+		return "mode=ro"
 	}
-	return dsn + "?mode=ro"
+
+	parts := strings.Split(query, "&")
+	modeSet := false
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		key, _, _ := strings.Cut(part, "=")
+		if strings.EqualFold(key, "mode") {
+			parts[i] = "mode=ro"
+			modeSet = true
+		}
+	}
+
+	out := strings.Join(parts, "&")
+	if !modeSet {
+		return out + "&mode=ro"
+	}
+	return out
 }
 
 func sortedKeys(row map[string]interface{}) []string {

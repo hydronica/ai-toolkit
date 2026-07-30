@@ -129,6 +129,21 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			Expected: Database{Name: "iap", Type: "postgres", Host: "h", DB: "iap", Username: "u"},
 		},
+		"requires sslrootcert when ssl skip hostname verify": {
+			Input: Config{
+				Databases: []Database{
+					{
+						Name:                  "iap",
+						Type:                  "postgres",
+						Host:                  "h",
+						DB:                    "iap",
+						Username:              "u",
+						SSLSkipHostnameVerify: true,
+					},
+				},
+			},
+			ExpectedErr: errors.New("ssl_skip_hostname_verify requires sslrootcert"),
+		},
 		"accepts valid mysql entry": {
 			Input: Config{
 				Databases: []Database{

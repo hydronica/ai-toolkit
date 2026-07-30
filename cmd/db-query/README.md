@@ -121,7 +121,7 @@ openssl x509 -in postgresql.crt -noout -subject -issuer
 
 For `postgres-iap-preprod`, download fresh **Server CA** and **Client certificate** from GCP Console → Cloud SQL → `postgres-iap-preprod` → Connections → Security. Each instance has unique CA dnQualifiers — mixing preprod/prod or `app` vs `postgres-iap-preprod` certs will not work.
 
-If you have the correct client cert but not the server CA yet, omit `sslrootcert` temporarily (encrypted connection, client auth only).
+`ssl_skip_hostname_verify` requires `sslrootcert` so the server certificate is verified against your CA without hostname matching.
 | `bigquery` | `project` (or `bq-project`) | `auth`: `adc` or `service_account`. Dataset lives in your SQL (see below); config `dataset` / `-dataset` are optional shortcuts only |
 | `mongo` | `uri`, `db_name` | `type = "mongodb"` is also accepted |
 

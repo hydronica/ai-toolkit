@@ -17,7 +17,9 @@ import (
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/db"
 )
 
-var forbidden = regexp.MustCompile(`\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|GRANT|REVOKE|EXEC|EXECUTE)\b`)
+var forbidden = regexp.MustCompile(`\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|GRANT|REVOKE|EXEC|EXECUTE|CALL|COPY|REPLACE|RENAME|INTO)\b`)
+
+var readOnlySideEffects = regexp.MustCompile(`\b(FOR\s+UPDATE|FOR\s+SHARE|LOCK\s+IN\s+SHARE\s+MODE)\b`)
 
 func main() {
 	queryFlag := flag.String("query", "", "SQL SELECT query to execute")
@@ -149,6 +151,9 @@ func validateReadOnlyQuery(query string) error {
 
 	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
 		return errors.New("only read-only SELECT queries are allowed")
+	}
+	if readOnlySideEffects.MatchString(upper) {
+		return errors.New("query contains forbidden locking clauses; only read-only SELECT queries are allowed")
 	}
 	if forbidden.MatchString(upper) {
 		return errors.New("query contains forbidden keywords; only read-only SELECT queries are allowed")

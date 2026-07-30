@@ -87,6 +87,26 @@ func Test_sqlConnectionDetails(t *testing.T) {
 				DSN:    "file:/tmp/custom.sqlite?mode=ro&cache=shared",
 			},
 		},
+		"sqlite enforces read only on connection override": {
+			Input: config.Database{
+				Type:       "sqlite",
+				Connection: "file:/tmp/custom.sqlite",
+			},
+			Expected: sqlConnResult{
+				Driver: "sqlite",
+				DSN:    "file:/tmp/custom.sqlite?mode=ro",
+			},
+		},
+		"sqlite replaces read write mode on connection override": {
+			Input: config.Database{
+				Type:       "sqlite",
+				Connection: "file:/tmp/custom.sqlite?mode=rw&cache=shared",
+			},
+			Expected: sqlConnResult{
+				Driver: "sqlite",
+				DSN:    "file:/tmp/custom.sqlite?mode=ro&cache=shared",
+			},
+		},
 	}
 	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
 		got := actual.(sqlConnResult)
@@ -107,6 +127,24 @@ func Test_sqlConnectionDetails(t *testing.T) {
 		}
 		return true, ""
 	}).SubTest(t)
+}
+
+func Test_connectSQL(t *testing.T) {
+	fn := func(ctx context.Context) (struct{}, error) {
+		_, err := connectSQL(ctx, &config.Database{Type: "sqlite", DB: ":memory:"})
+		return struct{}{}, err
+	}
+	cases := trial.Cases[context.Context, struct{}]{
+		"respects cancelled context": {
+			Input: func() context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			}(),
+			ExpectedErr: context.Canceled,
+		},
+	}
+	trial.New(fn, cases).SubTest(t)
 }
 
 func TestConnect_SQLite(t *testing.T) {

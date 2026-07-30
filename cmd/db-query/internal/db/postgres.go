@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -51,6 +53,10 @@ func connectPostgres(ctx context.Context, dbCfg *config.Database) (*sqlRunner, e
 }
 
 func postgresTLSConfigSkipHostname(dbCfg *config.Database) (*tls.Config, error) {
+	if strings.TrimSpace(dbCfg.SSLRootcert) == "" {
+		return nil, errors.New("sslrootcert is required when ssl_skip_hostname_verify is true")
+	}
+
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
@@ -63,49 +69,47 @@ func postgresTLSConfigSkipHostname(dbCfg *config.Database) (*tls.Config, error) 
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
-	var roots *x509.CertPool
-	if dbCfg.SSLRootcert != "" {
-		roots = x509.NewCertPool()
-		pem, err := os.ReadFile(dbCfg.SSLRootcert)
-		if err != nil {
-			return nil, fmt.Errorf("read sslrootcert: %w", err)
-		}
-		if !roots.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("parse sslrootcert")
-		}
-		tlsConfig.RootCAs = roots
+	roots := x509.NewCertPool()
+	pem, err := os.ReadFile(dbCfg.SSLRootcert)
+	if err != nil {
+		return nil, fmt.Errorf("read sslrootcert: %w", err)
 	}
+	if !roots.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("parse sslrootcert")
+	}
+	tlsConfig.RootCAs = roots
 
-	// Verify the chain against the CA when provided, but skip hostname matching.
+	// Verify the chain against the CA but skip hostname matching.
 	tlsConfig.InsecureSkipVerify = true
-	if roots != nil {
-		roots := roots
-		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			if len(rawCerts) == 0 {
-				return fmt.Errorf("no server certificate")
-			}
-			cert, err := x509.ParseCertificate(rawCerts[0])
-			if err != nil {
-				return fmt.Errorf("parse server cert: %w", err)
-			}
-			intermediates := x509.NewCertPool()
-			for _, raw := range rawCerts[1:] {
-				intermediate, err := x509.ParseCertificate(raw)
-				if err != nil {
-					return fmt.Errorf("parse intermediate cert: %w", err)
-				}
-				intermediates.AddCert(intermediate)
-			}
-			_, err = cert.Verify(x509.VerifyOptions{
-				Roots:         roots,
-				Intermediates: intermediates,
-			})
-			if err != nil {
-				return fmt.Errorf("verify server cert: %w", err)
-			}
-			return nil
-		}
+	tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		return verifyPeerCertChain(rawCerts, roots)
 	}
 
 	return tlsConfig, nil
+}
+
+func verifyPeerCertChain(rawCerts [][]byte, roots *x509.CertPool) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("no server certificate")
+	}
+	cert, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("parse server cert: %w", err)
+	}
+	intermediates := x509.NewCertPool()
+	for _, raw := range rawCerts[1:] {
+		intermediate, err := x509.ParseCertificate(raw)
+		if err != nil {
+			return fmt.Errorf("parse intermediate cert: %w", err)
+		}
+		intermediates.AddCert(intermediate)
+	}
+	_, err = cert.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+	})
+	if err != nil {
+		return fmt.Errorf("verify server cert: %w", err)
+	}
+	return nil
 }

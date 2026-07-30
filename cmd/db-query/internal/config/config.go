@@ -102,6 +102,9 @@ func (d *Database) validate() error {
 		if d.Host == "" || d.DB == "" || d.Username == "" {
 			return errors.New("postgres requires host, db, and username")
 		}
+		if d.SSLSkipHostnameVerify && strings.TrimSpace(d.SSLRootcert) == "" {
+			return errors.New("postgres ssl_skip_hostname_verify requires sslrootcert")
+		}
 	case "mysql":
 		if d.Host == "" || d.DB == "" || d.Username == "" {
 			return errors.New("mysql requires host, db, and username")
