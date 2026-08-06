@@ -7,7 +7,7 @@
 # Env:   PR_BASE — default base ref if --base is not passed
 #
 # Base resolution (after optional fetch): --base, then PR_BASE, then
-# origin/HEAD (if set), else origin/main, else origin/master.
+# upstream/HEAD|main|master when an upstream remote exists, else the same on origin.
 
 set -euo pipefail
 
@@ -21,6 +21,10 @@ Usage: scripts/pr_sum.sh [--base <ref>] [--no-fetch] [-h|--help]
 
 Run from anywhere inside a Git repository. Output is human-readable sections
 suitable for pasting into a PR description or command follow-up.
+
+When an upstream remote exists, the integration base defaults to upstream (not
+origin), so fork workflows with a stale origin/main still compare against the
+real merge target.
 EOF
 }
 
@@ -76,6 +80,249 @@ parse_repo_slug() {
   local url="$1"
   # Handle git@github.com:owner/repo.git or https://github.com/owner/repo
   echo "${url}" | sed -E 's#.*github\.com[:/]([^/]+/[^/]+)\.git$#\1#; s#.*github\.com[:/]([^/]+/[^/]+)$#\1#'
+}
+
+# Standard repo-relative paths GitHub recognizes for pull request templates.
+PR_TEMPLATE_CANDIDATES=(
+  ".github/pull_request_template.md"
+  ".github/PULL_REQUEST_TEMPLATE.md"
+  "pull_request_template.md"
+  "PULL_REQUEST_TEMPLATE.md"
+  "docs/pull_request_template.md"
+  "docs/PULL_REQUEST_TEMPLATE.md"
+)
+
+PR_TEMPLATE_DIR_CANDIDATES=(
+  ".github/PULL_REQUEST_TEMPLATE"
+  ".github/pull_request_template"
+  "PULL_REQUEST_TEMPLATE"
+  "pull_request_template"
+  "docs/PULL_REQUEST_TEMPLATE"
+  "docs/pull_request_template"
+)
+
+# Find a repo-local PR template on disk (file or directory).
+find_local_pr_template() {
+  local candidate="" dir="" first=""
+  for candidate in "${PR_TEMPLATE_CANDIDATES[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+  for dir in "${PR_TEMPLATE_DIR_CANDIDATES[@]}"; do
+    if [[ -d "${dir}" ]]; then
+      first="$(list_pr_template_dir_files "${dir}" | head -n1 || true)"
+      if [[ -n "${first}" ]]; then
+        echo "${dir}/"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+# List markdown templates inside a template directory (relative paths).
+list_pr_template_dir_files() {
+  local dir="${1%/}"
+  local file=""
+  while IFS= read -r file; do
+    [[ -n "${file}" ]] || continue
+    echo "${dir}/${file}"
+  done < <(find "${dir}" -maxdepth 1 -type f \( -iname '*.md' -o -iname '*.markdown' \) -exec basename {} \; 2>/dev/null | sort)
+}
+
+# Query GitHub for PR templates on the default branch of owner/repo.
+# Prints lines: filename<TAB>source (repository|organization)
+fetch_remote_pr_templates() {
+  local repo_slug="$1"
+  local owner="${repo_slug%%/*}"
+  local name="${repo_slug#*/}"
+  local query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){pullRequestTemplates{filename}}}'
+
+  if ! command -v gh >/dev/null 2>&1 || [[ "${GH_AUTH_OK}" != "true" ]]; then
+    return 1
+  fi
+
+  local filename="" source=""
+  while IFS= read -r filename; do
+    [[ -n "${filename}" ]] || continue
+    source="repository"
+    if ! gh api "repos/${repo_slug}/contents/${filename}" >/dev/null 2>&1; then
+      source="organization"
+    fi
+    printf '%s\t%s\n' "${filename}" "${source}"
+  done < <(gh api graphql -f query="${query}" -f owner="${owner}" -f name="${name}" \
+    --jq '.data.repository.pullRequestTemplates[]?.filename' 2>/dev/null || true)
+}
+
+# Check org/.github community defaults when the target repo has no template.
+fetch_org_pr_template() {
+  local org="$1"
+  local candidate="" dir_entry="" name=""
+
+  if ! command -v gh >/dev/null 2>&1 || [[ "${GH_AUTH_OK}" != "true" ]]; then
+    return 1
+  fi
+
+  for candidate in pull_request_template.md PULL_REQUEST_TEMPLATE.md; do
+    if gh api "repos/${org}/.github/contents/${candidate}" >/dev/null 2>&1; then
+      printf '%s\torganization\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  for candidate in PULL_REQUEST_TEMPLATE pull_request_template; do
+    dir_entry="$(gh api "repos/${org}/.github/contents/${candidate}" --jq '.[].name' 2>/dev/null || true)"
+    if [[ -n "${dir_entry}" ]]; then
+      while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        case "${name}" in
+          *.md|*.markdown)
+            printf '%s\torganization\n' "${candidate}/${name}"
+            ;;
+        esac
+      done <<< "${dir_entry}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+default_pr_template_body() {
+  cat <<'EOF'
+### Quality check
+
+- [ ] Documentation included
+- [ ] Test coverage
+
+### Summary
+
+<fill from commit messages and changed paths>
+EOF
+}
+
+# Print PR template body from disk or GitHub (stdout). Returns 1 if unavailable.
+load_pr_template_body() {
+  local body="" org="" org_api_path=""
+
+  if [[ "${PR_TEMPLATE_USE_BUILTIN}" == "true" ]]; then
+    default_pr_template_body
+    return 0
+  fi
+
+  if [[ -f "${PR_TEMPLATE_PATH}" ]]; then
+    cat "${PR_TEMPLATE_PATH}"
+    return 0
+  fi
+
+  if [[ "${GH_AUTH_OK}" != "true" ]] || [[ ! "${PR_TARGET_REPO}" =~ / ]]; then
+    echo "Warning: could not load template content for ${PR_TEMPLATE_PATH} (gh auth or target repo required)." >&2
+    return 1
+  fi
+
+  case "${PR_TEMPLATE_SOURCE}" in
+    remote)
+      if [[ "${PR_TEMPLATE_SCOPE}" == "organization" ]]; then
+        org="${PR_TARGET_REPO%%/*}"
+        org_api_path="${PR_TEMPLATE_PATH#.github/}"
+        body="$(gh api "repos/${org}/.github/contents/${org_api_path}" --jq -r '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+      else
+        body="$(gh api "repos/${PR_TARGET_REPO}/contents/${PR_TEMPLATE_PATH}" --jq -r '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+      fi
+      ;;
+    org-default)
+      org="${PR_TARGET_REPO%%/*}"
+      body="$(gh api "repos/${org}/.github/contents/${PR_TEMPLATE_PATH}" --jq -r '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+      ;;
+    *)
+      echo "Warning: could not load template content for ${PR_TEMPLATE_PATH}." >&2
+      return 1
+      ;;
+  esac
+
+  if [[ -n "${body}" ]]; then
+    printf '%s\n' "${body}"
+    return 0
+  fi
+
+  echo "Warning: could not load template content for ${PR_TEMPLATE_PATH}." >&2
+  return 1
+}
+
+# Populate PR_TEMPLATE_* globals for the output section.
+detect_pr_template() {
+  PR_TEMPLATE_SOURCE=""
+  PR_TEMPLATE_PATH=""
+  PR_TEMPLATE_SCOPE=""
+  PR_TEMPLATE_EXTRA=""
+  PR_TEMPLATE_GH_FLAG=""
+  PR_TEMPLATE_USE_BUILTIN="true"
+
+  local local_path="" remote_line="" filename="" source="" org="" dir_file="" org_api_path=""
+  local template_files=()
+
+  if local_path="$(find_local_pr_template)"; then
+    if [[ "${local_path}" == */ ]]; then
+      template_files=()
+      while IFS= read -r dir_file; do
+        [[ -n "${dir_file}" ]] || continue
+        template_files+=("${dir_file}")
+      done < <(list_pr_template_dir_files "${local_path%/}")
+      if ((${#template_files[@]} == 0)); then
+        local_path=""
+      else
+        PR_TEMPLATE_SOURCE="local"
+        PR_TEMPLATE_SCOPE="repository"
+        PR_TEMPLATE_PATH="${template_files[0]}"
+        PR_TEMPLATE_USE_BUILTIN="false"
+        if ((${#template_files[@]} > 1)); then
+          PR_TEMPLATE_EXTRA="Additional templates: $(IFS=', '; echo "${template_files[*]}")"
+        fi
+        PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
+        return 0
+      fi
+    else
+      PR_TEMPLATE_SOURCE="local"
+      PR_TEMPLATE_SCOPE="repository"
+      PR_TEMPLATE_PATH="${local_path}"
+      PR_TEMPLATE_USE_BUILTIN="false"
+      PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
+      return 0
+    fi
+  fi
+
+  if [[ "${PR_TARGET_REPO}" =~ / ]]; then
+    remote_line="$(fetch_remote_pr_templates "${PR_TARGET_REPO}" | head -n1 || true)"
+    if [[ -n "${remote_line}" ]]; then
+      PR_TEMPLATE_SOURCE="remote"
+      PR_TEMPLATE_PATH="${remote_line%%$'\t'*}"
+      PR_TEMPLATE_SCOPE="${remote_line#*$'\t'}"
+      PR_TEMPLATE_USE_BUILTIN="false"
+      if [[ -f "${PR_TEMPLATE_PATH}" ]]; then
+        PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
+      elif [[ "${PR_TEMPLATE_SCOPE}" == "organization" ]]; then
+        PR_TEMPLATE_GH_FLAG="--template /tmp/pr-template.md"
+      else
+        PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
+      fi
+      return 0
+    fi
+
+    org="${PR_TARGET_REPO%%/*}"
+    remote_line="$(fetch_org_pr_template "${org}" | head -n1 || true)"
+    if [[ -n "${remote_line}" ]]; then
+      PR_TEMPLATE_SOURCE="org-default"
+      PR_TEMPLATE_PATH="${remote_line%%$'\t'*}"
+      PR_TEMPLATE_SCOPE="${remote_line#*$'\t'}"
+      PR_TEMPLATE_USE_BUILTIN="false"
+      PR_TEMPLATE_GH_FLAG="--template /tmp/pr-template.md"
+      return 0
+    fi
+  fi
+
+  PR_TEMPLATE_GH_FLAG="--body-file <filled-template-file>"
 }
 
 # Detect if origin is a fork and find PR target repo
@@ -163,16 +410,27 @@ if git remote get-url origin >/dev/null 2>&1; then
   DEFAULT_REMOTE="origin"
 fi
 
+# Prefer upstream for integration base when present (fork workflow: origin/main is often stale).
+INTEGRATION_REMOTE=""
+if git remote get-url upstream >/dev/null 2>&1; then
+  INTEGRATION_REMOTE="upstream"
+elif [[ -n "${DEFAULT_REMOTE}" ]]; then
+  INTEGRATION_REMOTE="${DEFAULT_REMOTE}"
+fi
+
 if [[ "${DO_FETCH}" == "true" ]]; then
   if [[ -n "${DEFAULT_REMOTE}" ]]; then
     try_fetch "${DEFAULT_REMOTE}"
   else
-    echo "Warning: no 'origin' remote; skipping initial fetch." >&2
+    echo "Warning: no 'origin' remote; skipping origin fetch." >&2
+  fi
+  if [[ -n "${INTEGRATION_REMOTE}" && "${INTEGRATION_REMOTE}" != "${DEFAULT_REMOTE}" ]]; then
+    try_fetch "${INTEGRATION_REMOTE}"
   fi
 fi
 
 resolve_base_ref() {
-  local candidate="" sym=""
+  local candidate="" sym="" remote=""
   if [[ -n "${BASE_OVERRIDE}" ]]; then
     git rev-parse --verify "${BASE_OVERRIDE}^{commit}" >/dev/null 2>&1 || die "Base ref not found: ${BASE_OVERRIDE}"
     echo "${BASE_OVERRIDE}"
@@ -183,7 +441,9 @@ resolve_base_ref() {
     echo "${PR_BASE}"
     return 0
   fi
-  sym="$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)"
+  remote="${INTEGRATION_REMOTE}"
+  [[ -n "${remote}" ]] || die "Could not resolve base ref. Set PR_BASE, pass --base, or add an origin/upstream remote."
+  sym="$(git symbolic-ref -q "refs/remotes/${remote}/HEAD" 2>/dev/null || true)"
   if [[ -n "${sym}" ]]; then
     candidate="${sym#refs/remotes/}"
     if git rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
@@ -191,13 +451,13 @@ resolve_base_ref() {
       return 0
     fi
   fi
-  for candidate in origin/main origin/master; do
+  for candidate in "${remote}/main" "${remote}/master"; do
     if git rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
       echo "${candidate}"
       return 0
     fi
   done
-  die "Could not resolve base ref. Set PR_BASE, pass --base, or ensure origin/main (or origin/master / origin/HEAD) exists after fetch."
+  die "Could not resolve base ref. Set PR_BASE, pass --base, or ensure ${remote}/main (or ${remote}/master / ${remote}/HEAD) exists after fetch."
 }
 
 BASE="$(resolve_base_ref)"
@@ -218,6 +478,20 @@ printf "Base:       %s (%s)\n" "${BASE}" "${BASE_SHA}"
 MB="$(git merge-base HEAD "${BASE}" 2>/dev/null || true)"
 if [[ -n "${MB}" ]]; then
   printf "Merge-base: %s\n" "${MB}"
+fi
+
+if [[ "${INTEGRATION_REMOTE}" == "upstream" && -n "${DEFAULT_REMOTE}" ]]; then
+  for stale in "origin/main" "origin/master"; do
+    if git rev-parse --verify "${stale}^{commit}" >/dev/null 2>&1; then
+      if [[ "${stale}" != "${BASE}" ]]; then
+        behind="$(git rev-list --count "${stale}..${BASE}" 2>/dev/null || echo 0)"
+        if [[ "${behind}" -gt 0 ]]; then
+          echo "Note: ${stale} is ${behind} commit(s) behind ${BASE}; using ${BASE} as integration base."
+        fi
+      fi
+      break
+    fi
+  done
 fi
 
 # Collect PR readiness status for summary
@@ -262,6 +536,7 @@ if MERGE_TREE_OUT="$(git merge-tree --write-tree "${BASE}" HEAD 2>&1)"; then
 fi
 
 PR_TARGET_REPO="$(detect_pr_target)"
+detect_pr_template
 
 section "PR Readiness"
 if [[ "${GH_AUTH_OK}" == "true" ]]; then
@@ -378,3 +653,31 @@ if [[ "${PR_TARGET_REPO}" =~ / ]]; then
 else
   echo "Could not determine PR target (gh cli may not be authenticated)"
 fi
+
+section "PR template"
+if [[ "${PR_TEMPLATE_USE_BUILTIN}" == "false" ]]; then
+  case "${PR_TEMPLATE_SOURCE}" in
+    local)
+      echo "✓ Repository template: ${PR_TEMPLATE_PATH}"
+      ;;
+    remote)
+      echo "✓ Template on default branch: ${PR_TEMPLATE_PATH} (${PR_TEMPLATE_SCOPE})"
+      if [[ ! -f "${PR_TEMPLATE_PATH}" ]]; then
+        echo "  (fetched from GitHub below)"
+      fi
+      ;;
+    org-default)
+      echo "✓ Organization default template: ${PR_TARGET_REPO%%/*}/.github/${PR_TEMPLATE_PATH}"
+      echo "  (fetched from GitHub below)"
+      ;;
+  esac
+  if [[ -n "${PR_TEMPLATE_EXTRA}" ]]; then
+    echo "${PR_TEMPLATE_EXTRA}"
+  fi
+  echo "Use with: gh pr create --title \"<title>\" ${PR_TEMPLATE_GH_FLAG}"
+else
+  echo "○ No repository or organization PR template found"
+  echo "Use the default ai-toolkit pull_request template below."
+fi
+echo ""
+load_pr_template_body || true
