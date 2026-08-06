@@ -103,7 +103,7 @@ PR_TEMPLATE_DIR_CANDIDATES=(
 
 # Find a repo-local PR template on disk (file or directory).
 find_local_pr_template() {
-  local candidate="" dir=""
+  local candidate="" dir="" first=""
   for candidate in "${PR_TEMPLATE_CANDIDATES[@]}"; do
     if [[ -f "${candidate}" ]]; then
       echo "${candidate}"
@@ -112,8 +112,11 @@ find_local_pr_template() {
   done
   for dir in "${PR_TEMPLATE_DIR_CANDIDATES[@]}"; do
     if [[ -d "${dir}" ]]; then
-      echo "${dir}/"
-      return 0
+      first="$(list_pr_template_dir_files "${dir}" | head -n1 || true)"
+      if [[ -n "${first}" ]]; then
+        echo "${dir}/"
+        return 0
+      fi
     fi
   done
   return 1
@@ -164,7 +167,7 @@ fetch_org_pr_template() {
 
   for candidate in pull_request_template.md PULL_REQUEST_TEMPLATE.md; do
     if gh api "repos/${org}/.github/contents/${candidate}" >/dev/null 2>&1; then
-      printf 'org:%s/.github/%s\torganization\n' "${org}" "${candidate}"
+      printf '%s\torganization\n' "${candidate}"
       return 0
     fi
   done
@@ -176,7 +179,7 @@ fetch_org_pr_template() {
         [[ -n "${name}" ]] || continue
         case "${name}" in
           *.md|*.markdown)
-            printf 'org:%s/.github/%s/%s\torganization\n' "${org}" "${candidate}" "${name}"
+            printf '%s\torganization\n' "${candidate}/${name}"
             ;;
         esac
       done <<< "${dir_entry}"
@@ -187,6 +190,67 @@ fetch_org_pr_template() {
   return 1
 }
 
+default_pr_template_body() {
+  cat <<'EOF'
+### Quality check
+
+- [ ] Documentation included
+- [ ] Test coverage
+
+### Summary
+
+<fill from commit messages and changed paths>
+EOF
+}
+
+# Print PR template body from disk or GitHub (stdout). Returns 1 if unavailable.
+load_pr_template_body() {
+  local body="" org="" org_api_path=""
+
+  if [[ "${PR_TEMPLATE_USE_BUILTIN}" == "true" ]]; then
+    default_pr_template_body
+    return 0
+  fi
+
+  if [[ -f "${PR_TEMPLATE_PATH}" ]]; then
+    cat "${PR_TEMPLATE_PATH}"
+    return 0
+  fi
+
+  if [[ "${GH_AUTH_OK}" != "true" ]] || [[ ! "${PR_TARGET_REPO}" =~ / ]]; then
+    echo "Warning: could not load template content for ${PR_TEMPLATE_PATH} (gh auth or target repo required)." >&2
+    return 1
+  fi
+
+  case "${PR_TEMPLATE_SOURCE}" in
+    remote)
+      if [[ "${PR_TEMPLATE_SCOPE}" == "organization" ]]; then
+        org="${PR_TARGET_REPO%%/*}"
+        org_api_path="${PR_TEMPLATE_PATH#.github/}"
+        body="$(gh api "repos/${org}/.github/contents/${org_api_path}" --jq -r '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+      else
+        body="$(gh api "repos/${PR_TARGET_REPO}/contents/${PR_TEMPLATE_PATH}" --jq -r '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+      fi
+      ;;
+    org-default)
+      org="${PR_TARGET_REPO%%/*}"
+      body="$(gh api "repos/${org}/.github/contents/${PR_TEMPLATE_PATH}" --jq -r '.content' 2>/dev/null | base64 -d 2>/dev/null || true)"
+      ;;
+    *)
+      echo "Warning: could not load template content for ${PR_TEMPLATE_PATH}." >&2
+      return 1
+      ;;
+  esac
+
+  if [[ -n "${body}" ]]; then
+    printf '%s\n' "${body}"
+    return 0
+  fi
+
+  echo "Warning: could not load template content for ${PR_TEMPLATE_PATH}." >&2
+  return 1
+}
+
 # Populate PR_TEMPLATE_* globals for the output section.
 detect_pr_template() {
   PR_TEMPLATE_SOURCE=""
@@ -194,25 +258,39 @@ detect_pr_template() {
   PR_TEMPLATE_SCOPE=""
   PR_TEMPLATE_EXTRA=""
   PR_TEMPLATE_GH_FLAG=""
-  PR_TEMPLATE_FETCH_CMD=""
   PR_TEMPLATE_USE_BUILTIN="true"
 
   local local_path="" remote_line="" filename="" source="" org="" dir_file="" org_api_path=""
+  local template_files=()
 
   if local_path="$(find_local_pr_template)"; then
-    PR_TEMPLATE_SOURCE="local"
-    PR_TEMPLATE_SCOPE="repository"
-    PR_TEMPLATE_PATH="${local_path}"
-    PR_TEMPLATE_USE_BUILTIN="false"
     if [[ "${local_path}" == */ ]]; then
-      PR_TEMPLATE_EXTRA="$(list_pr_template_dir_files "${local_path%/}" | paste -sd ', ' -)"
-      if [[ -n "${PR_TEMPLATE_EXTRA}" ]]; then
-        PR_TEMPLATE_PATH="${PR_TEMPLATE_EXTRA%%,*}"
-        PR_TEMPLATE_EXTRA="Additional templates: ${PR_TEMPLATE_EXTRA}"
+      template_files=()
+      while IFS= read -r dir_file; do
+        [[ -n "${dir_file}" ]] || continue
+        template_files+=("${dir_file}")
+      done < <(list_pr_template_dir_files "${local_path%/}")
+      if ((${#template_files[@]} == 0)); then
+        local_path=""
+      else
+        PR_TEMPLATE_SOURCE="local"
+        PR_TEMPLATE_SCOPE="repository"
+        PR_TEMPLATE_PATH="${template_files[0]}"
+        PR_TEMPLATE_USE_BUILTIN="false"
+        if ((${#template_files[@]} > 1)); then
+          PR_TEMPLATE_EXTRA="Additional templates: $(IFS=', '; echo "${template_files[*]}")"
+        fi
+        PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
+        return 0
       fi
+    else
+      PR_TEMPLATE_SOURCE="local"
+      PR_TEMPLATE_SCOPE="repository"
+      PR_TEMPLATE_PATH="${local_path}"
+      PR_TEMPLATE_USE_BUILTIN="false"
+      PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
+      return 0
     fi
-    PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
-    return 0
   fi
 
   if [[ "${PR_TARGET_REPO}" =~ / ]]; then
@@ -225,10 +303,6 @@ detect_pr_template() {
       if [[ -f "${PR_TEMPLATE_PATH}" ]]; then
         PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
       elif [[ "${PR_TEMPLATE_SCOPE}" == "organization" ]]; then
-        org="${PR_TARGET_REPO%%/*}"
-        org_api_path="${PR_TEMPLATE_PATH}"
-        org_api_path="${org_api_path#.github/}"
-        PR_TEMPLATE_FETCH_CMD="gh api repos/${org}/.github/contents/${org_api_path} --jq -r '.content' | base64 -d > /tmp/pr-template.md"
         PR_TEMPLATE_GH_FLAG="--template /tmp/pr-template.md"
       else
         PR_TEMPLATE_GH_FLAG="--template ${PR_TEMPLATE_PATH}"
@@ -243,8 +317,6 @@ detect_pr_template() {
       PR_TEMPLATE_PATH="${remote_line%%$'\t'*}"
       PR_TEMPLATE_SCOPE="${remote_line#*$'\t'}"
       PR_TEMPLATE_USE_BUILTIN="false"
-      org_api_path="${PR_TEMPLATE_PATH#org:*/}"
-      PR_TEMPLATE_FETCH_CMD="gh api repos/${org}/.github/contents/${org_api_path} --jq -r '.content' | base64 -d > /tmp/pr-template.md"
       PR_TEMPLATE_GH_FLAG="--template /tmp/pr-template.md"
       return 0
     fi
@@ -586,27 +658,26 @@ section "PR template"
 if [[ "${PR_TEMPLATE_USE_BUILTIN}" == "false" ]]; then
   case "${PR_TEMPLATE_SOURCE}" in
     local)
-      echo "✓ Repository template found locally: ${PR_TEMPLATE_PATH}"
+      echo "✓ Repository template: ${PR_TEMPLATE_PATH}"
       ;;
     remote)
       echo "✓ Template on default branch: ${PR_TEMPLATE_PATH} (${PR_TEMPLATE_SCOPE})"
       if [[ ! -f "${PR_TEMPLATE_PATH}" ]]; then
-        echo "  Note: file is not in the current branch; check out or copy from the default branch to use --template."
+        echo "  (fetched from GitHub below)"
       fi
       ;;
     org-default)
-      echo "✓ Organization default template: ${PR_TEMPLATE_PATH#org:}"
-      echo "  Target repo has no local template; source is ${PR_TARGET_REPO%%/*}/.github"
-      if [[ -n "${PR_TEMPLATE_FETCH_CMD}" ]]; then
-        echo "  Fetch: ${PR_TEMPLATE_FETCH_CMD}"
-      fi
+      echo "✓ Organization default template: ${PR_TARGET_REPO%%/*}/.github/${PR_TEMPLATE_PATH}"
+      echo "  (fetched from GitHub below)"
       ;;
   esac
   if [[ -n "${PR_TEMPLATE_EXTRA}" ]]; then
     echo "${PR_TEMPLATE_EXTRA}"
   fi
-  echo "Use predefined template for gh pr create (${PR_TEMPLATE_GH_FLAG}); do not use the ai-toolkit pull_request command template."
+  echo "Use with: gh pr create --title \"<title>\" ${PR_TEMPLATE_GH_FLAG}"
 else
   echo "○ No repository or organization PR template found"
-  echo "Use the ai-toolkit pull_request command template with --body-file when creating the PR."
+  echo "Use the default ai-toolkit pull_request template below."
 fi
+echo ""
+load_pr_template_body || true
