@@ -7,7 +7,7 @@
 # Env:   PR_BASE — default base ref if --base is not passed
 #
 # Base resolution (after optional fetch): --base, then PR_BASE, then
-# origin/HEAD (if set), else origin/main, else origin/master.
+# upstream/HEAD|main|master when an upstream remote exists, else the same on origin.
 
 set -euo pipefail
 
@@ -21,6 +21,10 @@ Usage: scripts/pr_sum.sh [--base <ref>] [--no-fetch] [-h|--help]
 
 Run from anywhere inside a Git repository. Output is human-readable sections
 suitable for pasting into a PR description or command follow-up.
+
+When an upstream remote exists, the integration base defaults to upstream (not
+origin), so fork workflows with a stale origin/main still compare against the
+real merge target.
 EOF
 }
 
@@ -334,16 +338,27 @@ if git remote get-url origin >/dev/null 2>&1; then
   DEFAULT_REMOTE="origin"
 fi
 
+# Prefer upstream for integration base when present (fork workflow: origin/main is often stale).
+INTEGRATION_REMOTE=""
+if git remote get-url upstream >/dev/null 2>&1; then
+  INTEGRATION_REMOTE="upstream"
+elif [[ -n "${DEFAULT_REMOTE}" ]]; then
+  INTEGRATION_REMOTE="${DEFAULT_REMOTE}"
+fi
+
 if [[ "${DO_FETCH}" == "true" ]]; then
   if [[ -n "${DEFAULT_REMOTE}" ]]; then
     try_fetch "${DEFAULT_REMOTE}"
   else
-    echo "Warning: no 'origin' remote; skipping initial fetch." >&2
+    echo "Warning: no 'origin' remote; skipping origin fetch." >&2
+  fi
+  if [[ -n "${INTEGRATION_REMOTE}" && "${INTEGRATION_REMOTE}" != "${DEFAULT_REMOTE}" ]]; then
+    try_fetch "${INTEGRATION_REMOTE}"
   fi
 fi
 
 resolve_base_ref() {
-  local candidate="" sym=""
+  local candidate="" sym="" remote=""
   if [[ -n "${BASE_OVERRIDE}" ]]; then
     git rev-parse --verify "${BASE_OVERRIDE}^{commit}" >/dev/null 2>&1 || die "Base ref not found: ${BASE_OVERRIDE}"
     echo "${BASE_OVERRIDE}"
@@ -354,7 +369,9 @@ resolve_base_ref() {
     echo "${PR_BASE}"
     return 0
   fi
-  sym="$(git symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null || true)"
+  remote="${INTEGRATION_REMOTE}"
+  [[ -n "${remote}" ]] || die "Could not resolve base ref. Set PR_BASE, pass --base, or add an origin/upstream remote."
+  sym="$(git symbolic-ref -q "refs/remotes/${remote}/HEAD" 2>/dev/null || true)"
   if [[ -n "${sym}" ]]; then
     candidate="${sym#refs/remotes/}"
     if git rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
@@ -362,13 +379,13 @@ resolve_base_ref() {
       return 0
     fi
   fi
-  for candidate in origin/main origin/master; do
+  for candidate in "${remote}/main" "${remote}/master"; do
     if git rev-parse --verify "${candidate}^{commit}" >/dev/null 2>&1; then
       echo "${candidate}"
       return 0
     fi
   done
-  die "Could not resolve base ref. Set PR_BASE, pass --base, or ensure origin/main (or origin/master / origin/HEAD) exists after fetch."
+  die "Could not resolve base ref. Set PR_BASE, pass --base, or ensure ${remote}/main (or ${remote}/master / ${remote}/HEAD) exists after fetch."
 }
 
 BASE="$(resolve_base_ref)"
@@ -389,6 +406,20 @@ printf "Base:       %s (%s)\n" "${BASE}" "${BASE_SHA}"
 MB="$(git merge-base HEAD "${BASE}" 2>/dev/null || true)"
 if [[ -n "${MB}" ]]; then
   printf "Merge-base: %s\n" "${MB}"
+fi
+
+if [[ "${INTEGRATION_REMOTE}" == "upstream" && -n "${DEFAULT_REMOTE}" ]]; then
+  for stale in "origin/main" "origin/master"; do
+    if git rev-parse --verify "${stale}^{commit}" >/dev/null 2>&1; then
+      if [[ "${stale}" != "${BASE}" ]]; then
+        behind="$(git rev-list --count "${stale}..${BASE}" 2>/dev/null || echo 0)"
+        if [[ "${behind}" -gt 0 ]]; then
+          echo "Note: ${stale} is ${behind} commit(s) behind ${BASE}; using ${BASE} as integration base."
+        fi
+      fi
+      break
+    fi
+  done
 fi
 
 # Collect PR readiness status for summary
