@@ -19,13 +19,13 @@ type bigqueryRunner struct {
 	location string
 }
 
-func connectBigQuery(ctx context.Context, dbCfg *config.Database) (*bigqueryRunner, error) {
-	project := strings.TrimSpace(dbCfg.Project)
+func connectBigQuery(ctx context.Context, cfg *config.BigQueryConfig) (*bigqueryRunner, error) {
+	project := strings.TrimSpace(cfg.Project)
 	if project == "" {
 		return nil, fmt.Errorf("bigquery requires project")
 	}
 
-	opts, err := bigqueryClientOptions(dbCfg)
+	opts, err := bigqueryClientOptions(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -37,17 +37,17 @@ func connectBigQuery(ctx context.Context, dbCfg *config.Database) (*bigqueryRunn
 
 	return &bigqueryRunner{
 		client:   client,
-		dataset:  strings.TrimSpace(dbCfg.Dataset),
-		location: strings.TrimSpace(dbCfg.Location),
+		dataset:  strings.TrimSpace(cfg.Dataset),
+		location: strings.TrimSpace(cfg.Location),
 	}, nil
 }
 
-func bigqueryClientOptions(dbCfg *config.Database) ([]option.ClientOption, error) {
-	if dbCfg.UsesBigQueryADC() {
+func bigqueryClientOptions(cfg *config.BigQueryConfig) ([]option.ClientOption, error) {
+	if cfg.UsesBigQueryADC() {
 		return nil, nil
 	}
 
-	auth := strings.TrimSpace(dbCfg.Credentials)
+	auth := strings.TrimSpace(cfg.Credentials)
 	if auth == "" {
 		return nil, fmt.Errorf(`bigquery auth "service_account" requires credentials (or bq-auth)`)
 	}

@@ -38,7 +38,7 @@ func listDatabasesTool() mcp.Tool {
 	return mcp.NewTool("list_databases",
 		mcp.WithDescription("List databases configured in db-query (name and type). Call this before run_query to pick a valid -db value."),
 		mcp.WithString("config",
-			mcp.Description("Optional path to config.toml (defaults to DB_QUERY_CONFIG env or ./config.toml)"),
+			mcp.Description("Optional path to config.toml (defaults to config.toml beside the binary)"),
 		),
 	)
 }

@@ -9,21 +9,20 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"time"
+
+	goconfig "github.com/hydronica/go-config"
 
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/db"
 )
 
-var forbidden = regexp.MustCompile(`\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|GRANT|REVOKE|EXEC|EXECUTE|CALL|COPY|REPLACE|RENAME|INTO)\b`)
+var version = "dev"
 
-var readOnlySideEffects = regexp.MustCompile(`\b(FOR\s+UPDATE|FOR\s+SHARE|LOCK\s+IN\s+SHARE\s+MODE)\b`)
 
 func main() {
 	queryFlag := flag.String("query", "", "SQL SELECT query to execute")
-	configFlag := flag.String("config", config.DefaultPath(), "Path to TOML config file")
 	dbFlag := flag.String("db", "", "Database name from config (required when multiple databases are configured)")
 	listDBs := flag.Bool("list-dbs", false, "List configured databases and exit")
 	datasetFlag := flag.String("dataset", "", "BigQuery only: default dataset for unqualified table names (optional; use `project.dataset.table` in SQL instead)")
@@ -32,10 +31,14 @@ func main() {
 	timeout := flag.Duration("timeout", 5*time.Minute, "Query timeout")
 	ping := flag.Bool("ping", false, "Test database connection and exit")
 	listCollections := flag.Bool("list-collections", false, "MongoDB only: list collections in the configured database and exit")
-	flag.Parse()
 
-	cfg, err := config.Load(*configFlag)
-	if err != nil {
+	cfg := &config.Config{}
+	if err := goconfig.New(cfg).
+		ConfigPath(config.DefaultPath()).
+		Version(version).
+		Description("Run read-only queries against configured databases.").
+		Disable(goconfig.OptFlag).
+		Load(); err != nil {
 		exitErr(err)
 	}
 
@@ -81,12 +84,12 @@ func main() {
 		if err := runner.Ping(ctx, queryOpts); err != nil {
 			exitErr(err)
 		}
-		fmt.Fprintf(os.Stderr, "connected to %s (%s)\n", dbCfg.Name, dbCfg.Type)
+		fmt.Fprintf(os.Stderr, "connected to %s (%s)\n", dbCfg.DatabaseName(), dbCfg.DatabaseType())
 		return
 	}
 
 	if *listCollections {
-		if dbCfg.Type != "mongo" {
+		if dbCfg.DatabaseType() != "mongo" {
 			exitErr(errors.New("-list-collections requires a mongo database"))
 		}
 		output, err := runner.ListCollections(ctx)
@@ -102,12 +105,6 @@ func main() {
 	query, err := readQuery(*queryFlag)
 	if err != nil {
 		exitErr(err)
-	}
-
-	if dbCfg.Type != "mongo" {
-		if err := validateReadOnlyQuery(query); err != nil {
-			exitErr(err)
-		}
 	}
 
 	output, err := runner.RunQuery(ctx, query, queryOpts)
@@ -144,25 +141,6 @@ func readQuery(flagQuery string) (string, error) {
 	return query, nil
 }
 
-func validateReadOnlyQuery(query string) error {
-	trimmed := strings.TrimSpace(query)
-	trimmed = strings.TrimSuffix(trimmed, ";")
-	upper := strings.ToUpper(trimmed)
-
-	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
-		return errors.New("only read-only SELECT queries are allowed")
-	}
-	if readOnlySideEffects.MatchString(upper) {
-		return errors.New("query contains forbidden locking clauses; only read-only SELECT queries are allowed")
-	}
-	if forbidden.MatchString(upper) {
-		return errors.New("query contains forbidden keywords; only read-only SELECT queries are allowed")
-	}
-	if strings.Count(trimmed, ";") > 0 {
-		return errors.New("only a single SQL statement is allowed")
-	}
-	return nil
-}
 
 func writeOutput(w io.Writer, output db.QueryOutput, format string) error {
 	switch strings.ToLower(format) {

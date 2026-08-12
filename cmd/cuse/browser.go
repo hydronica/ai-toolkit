@@ -62,8 +62,11 @@ func findFirefoxBrowser() string {
 	if path := firstOnPath("firefox"); path != "" {
 		return path
 	}
-	return firstExisting(firefoxInstallPaths()...)
+	return firstExisting(firefoxInstallPathsFn()...)
 }
+
+// firefoxInstallPathsFn is swappable in tests to isolate from the host system.
+var firefoxInstallPathsFn = firefoxInstallPaths
 
 func firefoxInstallPaths() []string {
 	switch runtime.GOOS {

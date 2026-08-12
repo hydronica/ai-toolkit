@@ -126,6 +126,10 @@ func TestFindFirefoxBrowser(t *testing.T) {
 		os.Setenv("PATH", filepath.Join(home, "empty-bin"))
 		defer os.Setenv("PATH", oldPath)
 
+		oldPaths := firefoxInstallPathsFn
+		firefoxInstallPathsFn = func() []string { return nil }
+		defer func() { firefoxInstallPathsFn = oldPaths }()
+
 		got := findFirefoxBrowser()
 		if got != "" {
 			t.Fatalf("findFirefoxBrowser() = %q, want empty string when no Firefox found", got)

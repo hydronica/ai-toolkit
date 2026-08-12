@@ -9,13 +9,13 @@ import (
 )
 
 func Test_postgresTLSConfigSkipHostname(t *testing.T) {
-	fn := func(dbCfg config.Database) (struct{}, error) {
-		_, err := postgresTLSConfigSkipHostname(&dbCfg)
+	fn := func(cfg config.PostgresConfig) (struct{}, error) {
+		_, err := postgresTLSConfigSkipHostname(&cfg)
 		return struct{}{}, err
 	}
-	cases := trial.Cases[config.Database, struct{}]{
+	cases := trial.Cases[config.PostgresConfig, struct{}]{
 		"requires sslrootcert": {
-			Input: config.Database{
+			Input: config.PostgresConfig{
 				SSLSkipHostnameVerify: true,
 			},
 			ExpectedErr: errors.New("sslrootcert is required"),

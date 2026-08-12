@@ -17,22 +17,31 @@ import (
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
 )
 
-func connectPostgres(ctx context.Context, dbCfg *config.Database) (*sqlRunner, error) {
-	if !dbCfg.SSLSkipHostnameVerify {
-		return connectSQL(ctx, dbCfg)
+func connectPostgres(ctx context.Context, cfg *config.PostgresConfig) (*sqlRunner, error) {
+	if !cfg.SSLSkipHostnameVerify {
+		dsn := cfg.DSN()
+		db, err := sqlx.Open("postgres", dsn)
+		if err != nil {
+			return nil, fmt.Errorf("open: %w", err)
+		}
+		if err := db.PingContext(ctx); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("connect: %w", err)
+		}
+		return &sqlRunner{db}, nil
 	}
 
-	tlsConfig, err := postgresTLSConfigSkipHostname(dbCfg)
+	tlsConfig, err := postgresTLSConfigSkipHostname(cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	connStr := fmt.Sprintf(
 		"postgres://%s:%s@%s/%s?connect_timeout=5",
-		url.QueryEscape(dbCfg.Username),
-		url.QueryEscape(dbCfg.Password),
-		dbCfg.Host,
-		dbCfg.DB,
+		url.QueryEscape(cfg.Username),
+		url.QueryEscape(cfg.Password),
+		cfg.Host,
+		cfg.DB,
 	)
 
 	pgxCfg, err := pgx.ParseConfig(connStr)
@@ -49,11 +58,11 @@ func connectPostgres(ctx context.Context, dbCfg *config.Database) (*sqlRunner, e
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 
-	return &sqlRunner{db: sqlxDB}, nil
+	return &sqlRunner{sqlxDB}, nil
 }
 
-func postgresTLSConfigSkipHostname(dbCfg *config.Database) (*tls.Config, error) {
-	if strings.TrimSpace(dbCfg.SSLRootcert) == "" {
+func postgresTLSConfigSkipHostname(cfg *config.PostgresConfig) (*tls.Config, error) {
+	if strings.TrimSpace(cfg.SSLRootcert) == "" {
 		return nil, errors.New("sslrootcert is required when ssl_skip_hostname_verify is true")
 	}
 
@@ -61,8 +70,8 @@ func postgresTLSConfigSkipHostname(dbCfg *config.Database) (*tls.Config, error) 
 		MinVersion: tls.VersionTLS12,
 	}
 
-	if dbCfg.SSLCert != "" && dbCfg.SSLKey != "" {
-		cert, err := tls.LoadX509KeyPair(dbCfg.SSLCert, dbCfg.SSLKey)
+	if cfg.SSLCert != "" && cfg.SSLKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.SSLCert, cfg.SSLKey)
 		if err != nil {
 			return nil, fmt.Errorf("load client cert: %w", err)
 		}
@@ -70,7 +79,7 @@ func postgresTLSConfigSkipHostname(dbCfg *config.Database) (*tls.Config, error) 
 	}
 
 	roots := x509.NewCertPool()
-	pem, err := os.ReadFile(dbCfg.SSLRootcert)
+	pem, err := os.ReadFile(cfg.SSLRootcert)
 	if err != nil {
 		return nil, fmt.Errorf("read sslrootcert: %w", err)
 	}
@@ -79,7 +88,6 @@ func postgresTLSConfigSkipHostname(dbCfg *config.Database) (*tls.Config, error) 
 	}
 	tlsConfig.RootCAs = roots
 
-	// Verify the chain against the CA but skip hostname matching.
 	tlsConfig.InsecureSkipVerify = true
 	tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		return verifyPeerCertChain(rawCerts, roots)

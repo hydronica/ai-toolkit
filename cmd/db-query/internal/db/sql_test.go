@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
@@ -13,135 +12,65 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type sqlConnResult struct {
-	Driver   string
-	DSN      string
-	Contains []string
-}
-
-func Test_sqlConnectionDetails(t *testing.T) {
-	fn := func(dbCfg config.Database) (sqlConnResult, error) {
-		driver, dsn, err := sqlConnectionDetails(&dbCfg)
-		if err != nil {
-			return sqlConnResult{}, err
-		}
-		return sqlConnResult{Driver: driver, DSN: dsn}, nil
+func TestMySQLConfig_DSN(t *testing.T) {
+	fn := func(cfg config.MySQLConfig) (string, error) {
+		return cfg.DSN(), nil
 	}
-	cases := trial.Cases[config.Database, sqlConnResult]{
-		"mysql builds tcp dsn with default port": {
-			Input: config.Database{
-				Type:     "mysql",
+	cases := trial.Cases[config.MySQLConfig, string]{
+		"builds tcp dsn with default port": {
+			Input: config.MySQLConfig{
 				Host:     "db.example.com",
 				DB:       "app",
 				Username: "reader",
 				Password: "secret",
 			},
-			Expected: sqlConnResult{
-				Driver: "mysql",
-				DSN:    "reader:secret@tcp(db.example.com:3306)/app",
-			},
+			Expected: "reader:secret@tcp(db.example.com:3306)/app?checkConnLiveness=false&parseTime=true&timeout=5s&maxAllowedPacket=0",
 		},
-		"mysql preserves explicit host port": {
-			Input: config.Database{
-				Type:     "mysql",
+		"preserves explicit host port": {
+			Input: config.MySQLConfig{
 				Host:     "db.example.com:3307",
 				DB:       "app",
 				Username: "reader",
 			},
-			Expected: sqlConnResult{
-				Driver: "mysql",
-				Contains: []string{
-					"reader@tcp(db.example.com:3307)/app",
-					"parseTime=true",
-				},
-			},
+			Expected: "reader@tcp(db.example.com:3307)/app?checkConnLiveness=false&parseTime=true&timeout=5s&maxAllowedPacket=0",
 		},
-		"sqlite builds read-only file dsn": {
-			Input: config.Database{
-				Type: "sqlite",
-				DB:   "./data/app.sqlite",
+		"uses connection DSN when set": {
+			Input: config.MySQLConfig{
+				Connection: "user:pass@tcp(host:3306)/mydb?parseTime=true",
+				Host:       "ignored",
+				Username:   "ignored",
+				DB:         "ignored",
 			},
-			Expected: sqlConnResult{
-				Driver: "sqlite",
-				DSN:    "file:./data/app.sqlite?mode=ro",
-			},
-		},
-		"sqlite uses in-memory read-only dsn": {
-			Input: config.Database{
-				Type: "sqlite",
-				DB:   ":memory:",
-			},
-			Expected: sqlConnResult{
-				Driver: "sqlite",
-				DSN:    "file::memory:?mode=ro",
-			},
-		},
-		"sqlite uses connection override": {
-			Input: config.Database{
-				Type:       "sqlite",
-				DB:         "./ignored.sqlite",
-				Connection: "file:/tmp/custom.sqlite?mode=ro&cache=shared",
-			},
-			Expected: sqlConnResult{
-				Driver: "sqlite",
-				DSN:    "file:/tmp/custom.sqlite?mode=ro&cache=shared",
-			},
-		},
-		"sqlite enforces read only on connection override": {
-			Input: config.Database{
-				Type:       "sqlite",
-				Connection: "file:/tmp/custom.sqlite",
-			},
-			Expected: sqlConnResult{
-				Driver: "sqlite",
-				DSN:    "file:/tmp/custom.sqlite?mode=ro",
-			},
-		},
-		"sqlite replaces read write mode on connection override": {
-			Input: config.Database{
-				Type:       "sqlite",
-				Connection: "file:/tmp/custom.sqlite?mode=rw&cache=shared",
-			},
-			Expected: sqlConnResult{
-				Driver: "sqlite",
-				DSN:    "file:/tmp/custom.sqlite?mode=ro&cache=shared",
-			},
+			Expected: "user:pass@tcp(host:3306)/mydb?parseTime=true",
 		},
 	}
-	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
-		got := actual.(sqlConnResult)
-		want := expected.(sqlConnResult)
-		if got.Driver != want.Driver {
-			return false, "driver mismatch"
-		}
-		if want.DSN != "" && !strings.HasPrefix(got.DSN, want.DSN) {
-			return false, "dsn prefix mismatch"
-		}
-		for _, sub := range want.Contains {
-			if !strings.Contains(got.DSN, sub) {
-				return false, "dsn missing substring"
-			}
-		}
-		if want.Driver == "mysql" && want.DSN != "" && !strings.Contains(got.DSN, "parseTime=true") {
-			return false, "dsn missing parseTime=true"
-		}
-		return true, ""
-	}).SubTest(t)
+	trial.New(fn, cases).SubTest(t)
 }
 
-func Test_connectSQL(t *testing.T) {
-	fn := func(ctx context.Context) (struct{}, error) {
-		_, err := connectSQL(ctx, &config.Database{Type: "sqlite", DB: ":memory:"})
-		return struct{}{}, err
+func TestSQLiteConfig_DSN(t *testing.T) {
+	fn := func(cfg config.SQLiteConfig) (string, error) {
+		return cfg.DSN(), nil
 	}
-	cases := trial.Cases[context.Context, struct{}]{
-		"respects cancelled context": {
-			Input: func() context.Context {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel()
-				return ctx
-			}(),
-			ExpectedErr: context.Canceled,
+	cases := trial.Cases[config.SQLiteConfig, string]{
+		"builds read-only file dsn": {
+			Input:    config.SQLiteConfig{DB: "./data/app.sqlite"},
+			Expected: "file:./data/app.sqlite?mode=ro",
+		},
+		"in-memory skips read-only": {
+			Input:    config.SQLiteConfig{DB: ":memory:"},
+			Expected: "file::memory:",
+		},
+		"uses connection override": {
+			Input:    config.SQLiteConfig{DB: "./ignored.sqlite", Connection: "file:/tmp/custom.sqlite?mode=ro&cache=shared"},
+			Expected: "file:/tmp/custom.sqlite?mode=ro&cache=shared",
+		},
+		"enforces read only on connection override": {
+			Input:    config.SQLiteConfig{Connection: "file:/tmp/custom.sqlite"},
+			Expected: "file:/tmp/custom.sqlite?mode=ro",
+		},
+		"replaces read write mode on connection override": {
+			Input:    config.SQLiteConfig{Connection: "file:/tmp/custom.sqlite?mode=rw&cache=shared"},
+			Expected: "file:/tmp/custom.sqlite?mode=ro&cache=shared",
 		},
 	}
 	trial.New(fn, cases).SubTest(t)
@@ -163,7 +92,7 @@ func TestConnect_SQLite(t *testing.T) {
 	}
 	setup.Close()
 
-	runner, err := Connect(ctx, &config.Database{Type: "sqlite", DB: path})
+	runner, err := Connect(ctx, &config.SQLiteConfig{Name: "test", DB: path})
 	if err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}
