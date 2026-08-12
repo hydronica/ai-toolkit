@@ -53,6 +53,7 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
 - Extract a helper when it encapsulates non-trivial logic, is reused in multiple places, or materially clarifies a long/complex function.
 - Prefer naming helpers for **what** they do (`parseVoterRecord`), not for syntactic sugar around a single expression.
 
+### Concurrency essentials
 
 - Every goroutine needs a clear lifetime and shutdown path (`WaitGroup`, context cancellation, bounded worker pools).
 - Choose primitives by intent:

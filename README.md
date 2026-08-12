@@ -32,7 +32,7 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/
 - `${HOME}/.cursor/agents/ai-toolkit`
 - `${HOME}/.cursor/ai-toolkit` — scripts, canonical `rules-source/`, and `projects.registry` (e.g. `install-rules.sh`). Add that directory to `PATH` if you want to run scripts by name; see the post-install hint from `install.sh`.
 
-Some scripts require the [GitHub CLI](https://cli.github.com/) (`gh`) with `gh auth login` completed — notably `pr_sum.sh` and `release_sum.sh`. `install.sh` checks for `gh` after install and prints setup instructions if it is missing or not authenticated.
+Other bundled scripts include `review_sum.sh` (PR-ready context; no `gh` required). Some scripts require the [GitHub CLI](https://cli.github.com/) (`gh`) with `gh auth login` completed — notably `pr_sum.sh` and `release_sum.sh`. `install.sh` checks for `gh` after install and prints setup instructions if it is missing or not authenticated.
 
 `install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode. Pass `--no-sync-rules` to skip refreshing registered project rules.
 
