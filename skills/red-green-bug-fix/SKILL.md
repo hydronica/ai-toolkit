@@ -19,13 +19,23 @@ Each fix adds a test that fails for the **same reason** as the reported bug, the
 
 ## Procedure
 
-1. **Characterize** — Replication contract: Issue, Trigger, Expected (correct), Actual (bug), Scope; optional Out of scope and Failure signature after repro. If expected vs actual are not observables, stop and clarify with the user. Extend an existing test if one should have caught this.
+1. **Characterize** — Replication contract: Issue, Trigger, Expected (correct), Actual (bug), Scope; optional Out of scope and Failure signature after repro. If expected vs actual are not observables, stop and clarify with the user. **Extend an existing test** if one should have caught this (add cases to the existing `Test…` table; do not fork `TestFoo_nested` or a new `_test.go` file unless the subsystem is genuinely separate).
 2. **Replicate** — Manual or smallest automated repro; record failure signature (error, status, return value, log). Stop if repro disagrees with the issue.
-3. **RED** — Smallest test on the production path; name with issue ID and symptom; must fail; failure must match contract (not merely “test failed”). **Right-RED gate:** prod path (not setup/unused mock) · failure matches Actual · expected matches Expected (correct) · stable on re-run · would pass if bug removed. If gate fails, rewrite or delete the test—do not chase wrong RED in production. Report test name, command, brief failure quote.
-4. **GREEN** — Minimal production fix; run full package/suite in scope; no unrelated failures.
+3. **RED** — Smallest test on the production path; name with issue ID and symptom; must fail; failure must match contract (not merely “test failed”). **Right-RED gate:** prod path (not setup/unused mock) · failure matches Actual · expected matches Expected (correct) · stable on re-run · would pass if bug removed. If gate fails, rewrite or delete the test—do not chase wrong RED in production. Run tests; report test name, command, brief failure quote. **STOP** — present RED report and wait for user review before production changes, unless the user explicitly asked for RED and GREEN in the same task.
+4. **GREEN** — Minimal production fix; run full package/suite in scope; no unrelated failures. Proceed only after RED is approved or the task scope includes implementation.
 5. **Refactor** — Cleanup under green tests only; update tests and contract if observables change.
 
 **Untestable:** Skipped or documented placeholder test citing issue and contract; manual steps in PR; follow-up for automation—no silent fix without an anchor.
+
+## RED phase — test placement (see `go-testing.mdc`)
+
+When writing failing regression tests:
+
+- Add cases to the **existing** `Test…` for the API under test; reuse `fn`, `input`, and teardown.
+- Pair `_test.go` with its source file (`decode_test.go`, not `nested_test.go`).
+- Prefer **inline anonymous structs** in each case; use a **function-scoped** named type only when shared by 3+ cases in that test or required for interfaces/embed syntax.
+- Do **not** create shared fixture packages (`testfixtures`, `nestfixtures`) or duplicate types already in the file.
+- Add a short comment above the case group documenting the replication contract when behavior is non-obvious.
 
 ## When RED is wrong (symptom → action)
 
@@ -40,7 +50,7 @@ Each fix adds a test that fails for the **same reason** as the reported bug, the
 
 ## Anti-patterns
 
-Wrong expected without manual validation · over-mocked path · wrong test altitude (unit vs integration) · flaky RED · weak assertion (e.g. any error) · false GREEN (skip branch, weaken assert, drop test) · golden/expected copied from buggy output.
+Wrong expected without manual validation · over-mocked path · wrong test altitude (unit vs integration) · flaky RED · weak assertion (e.g. any error) · false GREEN (skip branch, weaken assert, drop test) · golden/expected copied from buggy output · parallel test function for same API (`TestFoo_nested`) · shared fixture package only for test structs · production changes before RED is verified and reviewed.
 
 ## Stuck on cause (RED ok, GREEN unclear)
 
