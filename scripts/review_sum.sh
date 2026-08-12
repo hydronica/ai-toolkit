@@ -19,7 +19,7 @@ Usage: scripts/review_sum.sh [--base <ref>] [--scope branch|uncommitted] [--no-f
   -h, --help            Show this help.
 
 Run from anywhere inside a Git repository. Output is human-readable sections
-for the local-pr-review skill or /review command.
+for the pr-ready skill or /ai-toolkit/pr_ready command.
 EOF
 }
 
@@ -313,7 +313,7 @@ discover_applicable_rules() {
 
 print_review_checklist_seed() {
   cat <<'EOF'
-# Local PR Review
+# PR Ready
 
 ## Summary
 <fill: 1-3 sentences on what changed and overall readiness>

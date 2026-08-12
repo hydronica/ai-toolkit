@@ -120,7 +120,7 @@ Otherwise: one row per changed file; collapse paths that share the same rule set
 - **Project rules:** Run `install-rules.sh` or the `install_rules` command to install filtered rules into `<project>/.cursor/rules/ai-toolkit/`. Projects are registered automatically for sync on the next `install.sh` run. Use `--no-register` to opt out.
 - **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke `@red-green-bug-fix` (not auto-attached).
-- **Review:** `commands/review.md` + `skills/local-pr-review/` — local PR-style review against `CONTRIBUTING.md`, `AGENTS.md`, and project rules; invoke `/review` or `@local-pr-review`. For best results, install project rules with `install_rules` first.
+- **PR ready:** `commands/pr_ready.md` + `skills/pr-ready/` — check changes against `CONTRIBUTING.md`, `AGENTS.md`, and project rules before opening a PR; invoke `/ai-toolkit/pr_ready` or `@pr-ready`. For best results, install project rules with `install_rules` first.
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
 - **Precedence:** If you use Team Rules, remember order is **Team → Project → User** when guidance conflicts. See [Team Rules](https://cursor.com/docs/rules#team-rules).
 

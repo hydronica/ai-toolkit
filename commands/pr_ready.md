@@ -1,4 +1,4 @@
-Run a local pull request review against project standards before opening a PR.
+Check whether branch changes are ready to open a PR against project standards.
 
 ## When to use
 
@@ -14,7 +14,7 @@ Run a local pull request review against project standards before opening a PR.
 
 ## Steps
 
-1. **Load the skill** — follow [`@local-pr-review`](../skills/local-pr-review/SKILL.md) for the full workflow, rubric, and output template.
+1. **Load the skill** — follow [`@pr-ready`](../skills/pr-ready/SKILL.md) for the full workflow, rubric, and output template.
 
 2. **Collect context** with `review_sum.sh` from the **repository you are reviewing** (usually the workspace root):
    - Prefer: `bash "${HOME}/.cursor/ai-toolkit/review_sum.sh"`
@@ -44,4 +44,4 @@ Report-only — do not fix findings unless the user asks.
 ## Edge cases
 
 - No project rules under `.cursor/rules/` — review against `rules-source` fallback and suggest `install_rules`.
-- For deep bug or security review, point the user to `/review-bugbot` or `/review-security` instead of duplicating those passes.
+- For deep bug or security review, point the user to Cursor's `/review` (Bugbot or Security Review) instead of duplicating those passes.

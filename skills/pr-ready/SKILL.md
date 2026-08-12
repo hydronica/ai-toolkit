@@ -1,17 +1,17 @@
 ---
-name: local-pr-review
+name: pr-ready
 description: >-
-  Local PR-style code review against CONTRIBUTING.md, AGENTS.md, and project
-  Cursor rules. Use when the user runs /review, @local-pr-review, or asks for
-  a local pull request review before opening a PR.
+  Check branch changes against CONTRIBUTING.md, AGENTS.md, and project Cursor
+  rules before opening a PR. Use when the user runs /ai-toolkit/pr_ready,
+  @pr-ready, or asks whether their changes are PR-ready.
 disable-model-invocation: true
 ---
 
-# Local PR review
+# PR ready
 
-**Load:** Invoke **`@local-pr-review`** or **`/review`** before opening a PR. Report-only — do not fix code unless the user asks.
+**Load:** Invoke **`/ai-toolkit/pr_ready`** or **`@pr-ready`** before opening a PR. Report-only — do not fix code unless the user asks.
 
-Mimics a pull request review locally by checking changes against `CONTRIBUTING.md`, `AGENTS.md`, and installed project rules (for example `go-standards`, `go-testing`, `go-project-structure`).
+Checks changes against `CONTRIBUTING.md`, `AGENTS.md`, and installed project rules (for example `go-standards`, `go-testing`, `go-project-structure`) to decide whether the branch is ready to open a pull request.
 
 ## Procedure
 
@@ -54,7 +54,7 @@ Address each dimension explicitly in **Compliance** and **Findings**:
 Use this structure exactly:
 
 ```markdown
-# Local PR Review
+# PR Ready
 
 ## Summary
 [1–3 sentences: what changed, overall readiness]
@@ -84,7 +84,7 @@ Sort findings by severity (Blocker first, then Suggestion, then Nit).
 
 - **Rules not installed** — `review_sum.sh` may list `~/.cursor/ai-toolkit/rules-source/` as fallback. Warn that project rules may be missing; suggest `install_rules`. Still review against the listed fallback files.
 - **Nested `AGENTS.md`** — include every `AGENTS.md` discovered along changed paths.
-- **Bug/security depth** — this skill checks standards and policy, not exhaustive bug hunting. If the user wants deeper passes, point them to Bugbot (`/review-bugbot`) or Security Review (`/review-security`).
+- **Bug/security depth** — this skill checks standards and policy, not exhaustive bug hunting. If the user wants deeper passes, point them to Cursor's `/review` (Bugbot or Security Review).
 - **No auto-fix** — do not change code or rerun review unless the user explicitly asks.
 
 ## Examples
