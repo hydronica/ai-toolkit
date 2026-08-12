@@ -19,6 +19,7 @@ type Config struct {
 	Timeout         time.Duration `flag:"timeout,t" comment:"Query timeout"`
 	Ping            bool          `flag:"ping" comment:"Test database connection and exit"`
 	ListCollections bool          `flag:"list-collections" comment:"MongoDB: list collections and exit"`
+	MCP             bool          `flag:"mcp" comment:"Start MCP stdio server"`
 
 	Databases DatabaseList `toml:"databases" flag:"-"`
 }

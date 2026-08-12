@@ -9,14 +9,13 @@ cuse:
 	cd cmd/cuse && go build -ldflags "-X main.version=$(VERSION)" -o ../../$(SCRIPTS)/cuse .
 
 db-query:
-	cd cmd/db-query && go build -o ../../$(SCRIPTS)/db-query .
-	cd cmd/db-query && go build -o ../../$(SCRIPTS)/db-query-mcp ./cmd/db-query-mcp
+	cd cmd/db-query && go build -ldflags "-X main.version=$(VERSION)" -o ../../$(SCRIPTS)/db-query .
 
 mcp:
-	cd cmd/db-query && go run ./cmd/db-query-mcp
+	$(SCRIPTS)/db-query -mcp
 
 clean:
-	rm -f $(SCRIPTS)/cuse $(SCRIPTS)/db-query $(SCRIPTS)/db-query-mcp
+	rm -f $(SCRIPTS)/cuse $(SCRIPTS)/db-query
 
 test:
 	go -C cmd/cuse test -cover ./...

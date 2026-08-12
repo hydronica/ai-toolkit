@@ -33,6 +33,11 @@ func main() {
 		exitErr(err)
 	}
 
+	if cfg.MCP {
+		serveMCP(cfg)
+		return
+	}
+
 	if cfg.ListDBs {
 		if strings.EqualFold(cfg.Format, "json") {
 			enc := json.NewEncoder(os.Stdout)

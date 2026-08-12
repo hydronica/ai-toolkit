@@ -7,7 +7,7 @@ Supported: Oracle, Postgres, MySQL, SQLite, BigQuery, MongoDB.
 ## Install
 
 ```bash
-make db-query          # from repo root → scripts/db-query + scripts/db-query-mcp
+make db-query          # from repo root → scripts/db-query
 go install .           # from this directory
 ```
 
@@ -34,6 +34,7 @@ Each `[[databases]]` entry needs a unique `name` and `type`. If only one databas
 | `-list-collections` | | MongoDB: list collections/views |
 | `-ping` | | Test connection and exit |
 | `-dataset` | | BigQuery: default dataset for unqualified tables |
+| `-mcp` | | Start MCP stdio server |
 
 ## Usage
 
@@ -71,11 +72,7 @@ stdout: JSON/CSV/table. stderr: errors. Exit 0 on success, 1 on failure.
 
 ## MCP Server
 
-Exposes the same CLI as native MCP tools (stdio JSON-RPC) for agents without shell access.
-
-```bash
-make db-query   # builds scripts/db-query-mcp
-```
+Pass `-mcp` to start a stdio JSON-RPC server exposing the same functionality as native MCP tools.
 
 Add to `.cursor/mcp.json`:
 
@@ -83,18 +80,14 @@ Add to `.cursor/mcp.json`:
 {
   "mcpServers": {
     "db-query": {
-      "command": "/path/to/scripts/db-query-mcp",
-      "env": {
-        "DB_QUERY_BIN": "/path/to/scripts/db-query"
-      }
+      "command": "/path/to/scripts/db-query",
+      "args": ["-mcp"]
     }
   }
 }
 ```
 
-Place `config.toml` beside the `db-query` binary, or pass the `config` parameter on each MCP tool call.
-
-Tools: `list_databases`, `list_collections`, `run_query`, `ping_database`.
+Place `config.toml` beside the binary. Tools: `list_databases`, `list_collections`, `run_query`, `ping_database`.
 
 ## Development
 

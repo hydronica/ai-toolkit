@@ -1,6 +1,5 @@
 .env
 scripts/cuse
 scripts/db-query
-scripts/db-query-mcp
 coverage.out
 coverage.html
