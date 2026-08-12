@@ -6,10 +6,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Config struct {
-	Databases DatabaseList `toml:"databases"`
+	Query           string        `flag:"query,q" comment:"SQL SELECT query to execute"`
+	DB              string        `flag:"db" comment:"Database name from config"`
+	ListDBs         bool          `flag:"list-dbs" comment:"List configured databases and exit"`
+	Dataset         string        `flag:"dataset" comment:"BigQuery: default dataset for unqualified table names"`
+	Format          string        `flag:"format,f" comment:"Output format: json, csv, table"`
+	Limit           int           `flag:"limit,l" comment:"Maximum rows to return (0 = unlimited)"`
+	Timeout         time.Duration `flag:"timeout,t" comment:"Query timeout"`
+	Ping            bool          `flag:"ping" comment:"Test database connection and exit"`
+	ListCollections bool          `flag:"list-collections" comment:"MongoDB: list collections and exit"`
+
+	Databases DatabaseList `toml:"databases" flag:"-"`
 }
 
 func DefaultPath() string {

@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -20,30 +19,22 @@ import (
 
 var version = "dev"
 
-
 func main() {
-	queryFlag := flag.String("query", "", "SQL SELECT query to execute")
-	dbFlag := flag.String("db", "", "Database name from config (required when multiple databases are configured)")
-	listDBs := flag.Bool("list-dbs", false, "List configured databases and exit")
-	datasetFlag := flag.String("dataset", "", "BigQuery only: default dataset for unqualified table names (optional; use `project.dataset.table` in SQL instead)")
-	format := flag.String("format", "json", "Output format: json, csv, table")
-	limit := flag.Int("limit", 1000, "Maximum rows to return (0 = unlimited)")
-	timeout := flag.Duration("timeout", 5*time.Minute, "Query timeout")
-	ping := flag.Bool("ping", false, "Test database connection and exit")
-	listCollections := flag.Bool("list-collections", false, "MongoDB only: list collections in the configured database and exit")
-
-	cfg := &config.Config{}
+	cfg := &config.Config{
+		Format:  "json",
+		Limit:   1000,
+		Timeout: 5 * time.Minute,
+	}
 	if err := goconfig.New(cfg).
 		ConfigPath(config.DefaultPath()).
 		Version(version).
 		Description("Run read-only queries against configured databases.").
-		Disable(goconfig.OptFlag).
 		Load(); err != nil {
 		exitErr(err)
 	}
 
-	if *listDBs {
-		if strings.EqualFold(*format, "json") {
+	if cfg.ListDBs {
+		if strings.EqualFold(cfg.Format, "json") {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(cfg.Summaries()); err != nil {
@@ -57,17 +48,17 @@ func main() {
 		return
 	}
 
-	dbCfg, err := cfg.Find(*dbFlag)
+	dbCfg, err := cfg.Find(cfg.DB)
 	if err != nil {
 		exitErr(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
 	queryOpts := db.QueryOptions{
-		Limit:   *limit,
-		Dataset: strings.TrimSpace(*datasetFlag),
+		Limit:   cfg.Limit,
+		Dataset: strings.TrimSpace(cfg.Dataset),
 	}
 
 	runner, err := db.Connect(ctx, dbCfg)
@@ -80,7 +71,7 @@ func main() {
 		}
 	}()
 
-	if *ping {
+	if cfg.Ping {
 		if err := runner.Ping(ctx, queryOpts); err != nil {
 			exitErr(err)
 		}
@@ -88,7 +79,7 @@ func main() {
 		return
 	}
 
-	if *listCollections {
+	if cfg.ListCollections {
 		if dbCfg.DatabaseType() != "mongo" {
 			exitErr(errors.New("-list-collections requires a mongo database"))
 		}
@@ -96,13 +87,13 @@ func main() {
 		if err != nil {
 			exitErr(err)
 		}
-		if err := writeOutput(os.Stdout, output, *format); err != nil {
+		if err := writeOutput(os.Stdout, output, cfg.Format); err != nil {
 			exitErr(err)
 		}
 		return
 	}
 
-	query, err := readQuery(*queryFlag)
+	query, err := readQuery(cfg.Query)
 	if err != nil {
 		exitErr(err)
 	}
@@ -112,7 +103,7 @@ func main() {
 		exitErr(err)
 	}
 
-	if err := writeOutput(os.Stdout, output, *format); err != nil {
+	if err := writeOutput(os.Stdout, output, cfg.Format); err != nil {
 		exitErr(err)
 	}
 }
