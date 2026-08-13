@@ -14,7 +14,7 @@ Usage: scripts/review_sum.sh [--base <ref>] [--scope branch|uncommitted] [--no-f
 
   --base <ref>          Integration base (e.g. origin/main). Overrides PR_BASE.
   --scope branch        Review branch changes vs merge-base plus working tree (default).
-  --scope uncommitted   Review only staged and unstaged changes.
+  --scope uncommitted   Review only staged, unstaged, and untracked changes.
   --no-fetch            Do not run git fetch before comparing to remote refs.
   -h, --help            Show this help.
 
@@ -69,6 +69,9 @@ parse_base_remote_branch() {
 }
 
 # Convert a simple glob (with **) to an extended regex for matching paths.
+# Self-check (bash [[ path =~ regex ]]):
+#   **/*.go       matches main.go and pkg/main.go
+#   **/*_test.go  matches foo_test.go and x/foo_test.go
 glob_to_regex() {
   local glob="$1"
   local regex="" ch
@@ -78,7 +81,10 @@ glob_to_regex() {
     glob="${glob:1}"
     case "${ch}" in
       '*')
-        if [[ "${glob:0:1}" == '*' ]]; then
+        if [[ "${glob:0:1}" == '*' && "${glob:1:1}" == '/' ]]; then
+          regex+="(.*/)?"
+          glob="${glob:2}"
+        elif [[ "${glob:0:1}" == '*' ]]; then
           regex+=".*"
           glob="${glob:1}"
         else
@@ -155,6 +161,7 @@ collect_changed_files() {
     while IFS= read -r f; do add_file "${f}"; done < <(git diff --name-only 2>/dev/null || true)
     while IFS= read -r f; do add_file "${f}"; done < <(git diff --cached --name-only 2>/dev/null || true)
   fi
+  while IFS= read -r f; do add_file "${f}"; done < <(git ls-files --others --exclude-standard 2>/dev/null || true)
 }
 
 discover_policy_docs() {
@@ -211,8 +218,11 @@ discover_applicable_rules() {
 
   for path in "${CHANGED_FILES[@]}"; do
     case "${path}" in
+      *_test.go)
+        has_go_test_changes="true"
+        has_go_changes="true"
+        ;;
       *.go) has_go_changes="true" ;;
-      *_test.go) has_go_test_changes="true" ;;
       *go-standards.mdc|*go-testing.mdc|*go-project-structure.md)
         has_go_changes="true"
         if [[ "${path}" == *go-testing* ]]; then
@@ -270,6 +280,7 @@ discover_applicable_rules() {
     rule_basename_present() {
       local base="$1"
       local existing
+      ((${#RULE_FILES[@]} == 0)) && return 1
       for existing in "${RULE_FILES[@]}"; do
         [[ "$(basename "${existing}")" == "${base}" ]] && return 0
       done
@@ -462,9 +473,9 @@ fi
 section "Scope"
 echo "Review scope: ${REVIEW_SCOPE}"
 if [[ "${REVIEW_SCOPE}" == "branch" ]]; then
-  echo "Includes committed changes (${BASE}...HEAD) plus staged and unstaged working tree changes."
+  echo "Includes committed changes (${BASE}...HEAD) plus staged, unstaged, and untracked working tree changes."
 else
-  echo "Includes staged and unstaged working tree changes only."
+  echo "Includes staged, unstaged, and untracked working tree changes only."
 fi
 echo "Changed file count: ${#CHANGED_FILES[@]}"
 
@@ -491,8 +502,10 @@ else
   fi
   WORK_SHORTSTAT="$(git diff --shortstat 2>/dev/null || true)"
   CACHED_SHORTSTAT="$(git diff --cached --shortstat 2>/dev/null || true)"
+  UNTRACKED_COUNT="$(git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')"
   [[ -n "${WORK_SHORTSTAT}" ]] && echo "Unstaged: ${WORK_SHORTSTAT}"
   [[ -n "${CACHED_SHORTSTAT}" ]] && echo "Staged: ${CACHED_SHORTSTAT}"
+  [[ "${UNTRACKED_COUNT}" -gt 0 ]] && echo "Untracked: ${UNTRACKED_COUNT} file(s)"
   echo ""
   echo "paths:"
   for path in "${CHANGED_FILES[@]}"; do

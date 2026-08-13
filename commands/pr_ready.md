@@ -4,7 +4,7 @@ Check whether branch changes are ready to open a PR against project standards.
 
 - Before opening a PR on the current branch
 - After finishing a feature branch and wanting a standards pass
-- To review uncommitted (staged or unstaged) work only
+- To review uncommitted (staged, unstaged, or untracked) work only
 
 ## Inputs
 
@@ -24,7 +24,7 @@ Check whether branch changes are ready to open a PR against project standards.
    - Use `--base <ref>` when the integration branch is not the repository default.
 
 3. **Review and report**
-   - If changed file count is zero, say there is nothing to review and stop.
+   - If changed file count is zero (including untracked files), say there is nothing to review and stop.
    - Read discovered `CONTRIBUTING.md`, `AGENTS.md`, and applicable rules in full.
    - Review the diff; map findings to their source (rule, contributing section, or agents heading).
    - Emit the report using the skill output template (compliance table, findings table, test plan, verdict).
