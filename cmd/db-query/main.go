@@ -80,15 +80,12 @@ func main() {
 		if err := runner.Ping(ctx, queryOpts); err != nil {
 			exitErr(err)
 		}
-		fmt.Fprintf(os.Stderr, "connected to %s (%s)\n", dbCfg.DatabaseName(), dbCfg.DatabaseType())
+		fmt.Fprintf(os.Stderr, "connected to %s (%s)\n", dbCfg.Name(), dbCfg.Type())
 		return
 	}
 
-	if cfg.ListCollections {
-		if dbCfg.DatabaseType() != "mongo" {
-			exitErr(errors.New("-list-collections requires a mongo database"))
-		}
-		output, err := runner.ListCollections(ctx)
+	if cfg.ListSchema || cfg.ListCollections {
+		output, err := runner.ListSchema(ctx, queryOpts)
 		if err != nil {
 			exitErr(err)
 		}

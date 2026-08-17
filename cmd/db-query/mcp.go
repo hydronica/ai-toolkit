@@ -28,7 +28,8 @@ func serveMCP(cfg *config.Config) {
 	s.AddTool(mcpListDatabasesTool(), mcpHandleListDatabases(cfg))
 	s.AddTool(mcpRunQueryTool(), mcpHandleRunQuery(cfg))
 	s.AddTool(mcpPingDatabaseTool(), mcpHandlePingDatabase(cfg))
-	s.AddTool(mcpListCollectionsTool(), mcpHandleListCollections(cfg))
+	s.AddTool(mcpListSchemaTool("list_schema"), mcpHandleListSchema(cfg))
+	s.AddTool(mcpListSchemaTool("list_collections"), mcpHandleListSchema(cfg))
 
 	if err := server.ServeStdio(s); err != nil {
 		fmt.Fprintf(os.Stderr, "db-query mcp: %v\n", err)
@@ -75,12 +76,22 @@ func mcpPingDatabaseTool() mcp.Tool {
 	)
 }
 
-func mcpListCollectionsTool() mcp.Tool {
-	return mcp.NewTool("list_collections",
-		mcp.WithDescription("List collections and views in a MongoDB database configured in db-query. Returns JSON with columns name and type."),
+func mcpListSchemaTool(name string) mcp.Tool {
+	desc := "List tables, views, or collections and their columns. Returns JSON with object, kind, column, and data_type. Limit applies to objects, not column rows."
+	if name == "list_collections" {
+		desc = "Deprecated alias of list_schema. " + desc
+	}
+	return mcp.NewTool(name,
+		mcp.WithDescription(desc),
 		mcp.WithString("db",
 			mcp.Required(),
-			mcp.Description("MongoDB database name from list_databases"),
+			mcp.Description("Database name from list_databases"),
+		),
+		mcp.WithString("dataset",
+			mcp.Description("BigQuery only: dataset to list (required when the config has no default dataset)"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description(fmt.Sprintf("Maximum objects to return (default %d; 0 = unlimited)", defaultMCPQueryLimit)),
 		),
 	)
 }
@@ -183,26 +194,34 @@ func mcpHandlePingDatabase(cfg *config.Config) server.ToolHandlerFunc {
 		if err := runner.Ping(ctx, db.QueryOptions{}); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("ping ok: %s (%s)", dbCfg.DatabaseName(), dbCfg.DatabaseType())), nil
+		return mcp.NewToolResultText(fmt.Sprintf("ping ok: %s (%s)", dbCfg.Name(), dbCfg.Type())), nil
 	}
 }
 
-func mcpHandleListCollections(cfg *config.Config) server.ToolHandlerFunc {
+func mcpHandleListSchema(cfg *config.Config) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		dbName, err := req.RequireString("db")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		dataset := req.GetString("dataset", "")
+		limit := defaultMCPQueryLimit
+		if raw, ok := req.GetArguments()["limit"]; ok && raw != nil {
+			switch v := raw.(type) {
+			case float64:
+				limit = int(v)
+			case int:
+				limit = v
+			}
+		}
+
 		dbCfg, err := cfg.Find(dbName)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if dbCfg.DatabaseType() != "mongo" {
-			return mcp.NewToolResultError("list_collections is only supported for mongo databases"), nil
-		}
 
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 
 		runner, err := db.Connect(ctx, dbCfg)
@@ -211,7 +230,10 @@ func mcpHandleListCollections(cfg *config.Config) server.ToolHandlerFunc {
 		}
 		defer runner.Close(ctx)
 
-		output, err := runner.ListCollections(ctx)
+		output, err := runner.ListSchema(ctx, db.QueryOptions{
+			Limit:   limit,
+			Dataset: strings.TrimSpace(dataset),
+		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

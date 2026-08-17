@@ -66,40 +66,44 @@ func (r *mongoRunner) Close(ctx context.Context) error {
 	return r.client.Disconnect(disconnectCtx)
 }
 
-func (r *mongoRunner) ListCollections(ctx context.Context) (QueryOutput, error) {
+func (r *mongoRunner) ListSchema(ctx context.Context, limit int) (QueryOutput, error) {
 	cursor, err := r.client.Database(r.dbName).ListCollections(ctx, bson.M{})
 	if err != nil {
-		return QueryOutput{}, fmt.Errorf("list collections: %w", err)
+		return QueryOutput{}, fmt.Errorf("list schema: %w", err)
 	}
 	defer cursor.Close(ctx)
 
-	output := QueryOutput{
-		Columns: []string{"name", "type"},
-		Rows:    make([]map[string]interface{}, 0),
+	type spec struct {
+		Name string `bson:"name"`
+		Type string `bson:"type"`
 	}
-
+	var specs []spec
 	for cursor.Next(ctx) {
-		var spec struct {
-			Name string `bson:"name"`
-			Type string `bson:"type"`
+		var s spec
+		if err := cursor.Decode(&s); err != nil {
+			return QueryOutput{}, fmt.Errorf("list schema: %w", err)
 		}
-		if err := cursor.Decode(&spec); err != nil {
-			return QueryOutput{}, fmt.Errorf("decode collection: %w", err)
-		}
-		output.Rows = append(output.Rows, map[string]interface{}{
-			"name": spec.Name,
-			"type": spec.Type,
-		})
+		specs = append(specs, s)
 	}
 	if err := cursor.Err(); err != nil {
-		return QueryOutput{}, fmt.Errorf("cursor: %w", err)
+		return QueryOutput{}, fmt.Errorf("list schema: %w", err)
 	}
 
-	sort.Slice(output.Rows, func(i, j int) bool {
-		return output.Rows[i]["name"].(string) < output.Rows[j]["name"].(string)
+	sort.Slice(specs, func(i, j int) bool {
+		return specs[i].Name < specs[j].Name
 	})
-	output.RowCount = len(output.Rows)
-	return output, nil
+
+	b := newCatalogBuilder(limit)
+	for _, s := range specs {
+		kind := strings.ToLower(strings.TrimSpace(s.Type))
+		if kind == "" {
+			kind = "collection"
+		}
+		if !b.add(s.Name, kind, "", "") {
+			break
+		}
+	}
+	return b.result(), nil
 }
 
 func (r *mongoRunner) RunQuery(ctx context.Context, query string, limit int) (QueryOutput, error) {

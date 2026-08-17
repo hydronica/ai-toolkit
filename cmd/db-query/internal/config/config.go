@@ -15,10 +15,11 @@ type Config struct {
 	ListDBs         bool          `flag:"list-dbs" comment:"List configured databases and exit"`
 	Dataset         string        `flag:"dataset" comment:"BigQuery: default dataset for unqualified table names"`
 	Format          string        `flag:"format,f" comment:"Output format: json, csv, table"`
-	Limit           int           `flag:"limit,l" comment:"Maximum rows to return (0 = unlimited)"`
+	Limit           int           `flag:"limit,l" comment:"Maximum rows to return (0 = unlimited); for -list-schema, maximum objects"`
 	Timeout         time.Duration `flag:"timeout,t" comment:"Query timeout"`
 	Ping            bool          `flag:"ping" comment:"Test database connection and exit"`
-	ListCollections bool          `flag:"list-collections" comment:"MongoDB: list collections and exit"`
+	ListSchema      bool          `flag:"list-schema" comment:"List tables, views, or collections and their columns, then exit"`
+	ListCollections bool          `flag:"list-collections" comment:"Deprecated alias of -list-schema"`
 	MCP             bool          `flag:"mcp" comment:"Start MCP stdio server"`
 
 	Databases DatabaseList `toml:"databases" flag:"-"`
@@ -39,7 +40,7 @@ func (c *Config) Validate() error {
 
 	seen := make(map[string]struct{}, len(c.Databases))
 	for i, db := range c.Databases {
-		name := strings.TrimSpace(db.DatabaseName())
+		name := strings.TrimSpace(db.Name())
 		if name == "" {
 			return fmt.Errorf("databases[%d]: name is required", i)
 		}
@@ -65,7 +66,7 @@ func (c *Config) Find(name string) (DatabaseConfig, error) {
 	}
 
 	for _, db := range c.Databases {
-		if db.DatabaseName() == name {
+		if db.Name() == name {
 			return db, nil
 		}
 	}
@@ -75,7 +76,7 @@ func (c *Config) Find(name string) (DatabaseConfig, error) {
 func (c *Config) Names() []string {
 	names := make([]string, len(c.Databases))
 	for i, db := range c.Databases {
-		names[i] = db.DatabaseName()
+		names[i] = db.Name()
 	}
 	return names
 }
@@ -88,7 +89,7 @@ type DatabaseSummary struct {
 func (c *Config) Summaries() []DatabaseSummary {
 	out := make([]DatabaseSummary, len(c.Databases))
 	for i, db := range c.Databases {
-		out[i] = DatabaseSummary{Name: db.DatabaseName(), Type: db.DatabaseType()}
+		out[i] = DatabaseSummary{Name: db.Name(), Type: db.Type()}
 	}
 	return out
 }

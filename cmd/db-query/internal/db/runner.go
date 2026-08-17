@@ -134,9 +134,13 @@ func (r *Runner) RunQuery(ctx context.Context, query string, opts QueryOptions) 
 	}
 }
 
-func (r *Runner) ListCollections(ctx context.Context) (QueryOutput, error) {
-	if r.mongo == nil {
-		return QueryOutput{}, errors.New("-list-collections is only supported for mongo databases")
+func (r *Runner) ListSchema(ctx context.Context, opts QueryOptions) (QueryOutput, error) {
+	switch {
+	case r.mongo != nil:
+		return r.mongo.ListSchema(ctx, opts.Limit)
+	case r.bigquery != nil:
+		return r.bigquery.ListSchema(ctx, opts)
+	default:
+		return r.sql.ListSchema(ctx, opts.Limit)
 	}
-	return r.mongo.ListCollections(ctx)
 }

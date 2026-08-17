@@ -89,6 +89,56 @@ func (r *bigqueryRunner) Close() error {
 	return r.client.Close()
 }
 
+func (r *bigqueryRunner) ListSchema(ctx context.Context, opts QueryOptions) (QueryOutput, error) {
+	dataset := strings.TrimSpace(opts.Dataset)
+	if dataset == "" {
+		dataset = r.dataset
+	}
+	if dataset == "" {
+		return QueryOutput{}, fmt.Errorf("bigquery list-schema requires -dataset")
+	}
+
+	it := r.client.Dataset(dataset).Tables(ctx)
+	b := newCatalogBuilder(opts.Limit)
+	for {
+		tbl, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return QueryOutput{}, fmt.Errorf("list schema: %w", err)
+		}
+		if !b.allowObject() {
+			break
+		}
+
+		meta, err := tbl.Metadata(ctx)
+		if err != nil {
+			return QueryOutput{}, fmt.Errorf("list schema: %w", err)
+		}
+
+		kind := sqlTableKind(string(meta.Type))
+		if len(meta.Schema) == 0 {
+			if !b.add(tbl.TableID, kind, "", "") {
+				break
+			}
+			continue
+		}
+
+		stopped := false
+		for _, field := range meta.Schema {
+			if !b.add(tbl.TableID, kind, field.Name, string(field.Type)) {
+				stopped = true
+				break
+			}
+		}
+		if stopped {
+			break
+		}
+	}
+	return b.result(), nil
+}
+
 func (r *bigqueryRunner) RunQuery(ctx context.Context, query string, opts QueryOptions) (QueryOutput, error) {
 	bqQuery := r.client.Query(query)
 	r.applyDefaults(bqQuery, opts.Dataset)

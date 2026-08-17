@@ -28,10 +28,11 @@ Each `[[databases]]` entry needs a unique `name` and `type`. If only one databas
 | `-db` | | Database name from config |
 | `-query` | | Query text (or pipe via stdin) |
 | `-format` | `json` | `json`, `csv`, or `table` |
-| `-limit` | `1000` | Max rows (`0` = unlimited) |
+| `-limit` | `1000` | Max rows (`0` = unlimited). For `-list-schema`, max objects |
 | `-timeout` | `5m` | Query timeout |
 | `-list-dbs` | | List configured databases and exit |
-| `-list-collections` | | MongoDB: list collections/views |
+| `-list-schema` | | List tables, views, or collections and their columns |
+| `-list-collections` | | Deprecated alias of `-list-schema` |
 | `-ping` | | Test connection and exit |
 | `-dataset` | | BigQuery: default dataset for unqualified tables |
 | `-mcp` | | Start MCP stdio server |
@@ -43,7 +44,9 @@ Each `[[databases]]` entry needs a unique `name` and `type`. If only one databas
 Single read-only `SELECT` or `WITH` statement. Write keywords and multiple statements are blocked.
 
 ```bash
+db-query -db mySQL -list-schema
 db-query -db mySQL -query "SELECT id, name FROM users LIMIT 5"
+db-query -db bigQuery -list-schema -dataset analytics
 db-query -db bigQuery -query "SELECT count(*) FROM events" -format csv > out.csv
 echo "SELECT 1" | db-query -db mydb
 ```
@@ -53,7 +56,7 @@ echo "SELECT 1" | db-query -db mydb
 Uses JSON queries with `collection`, `filter`, `projection`, `sort`, `limit`, or `pipeline`:
 
 ```bash
-db-query -db mongo -list-collections
+db-query -db mongo -list-schema
 db-query -db mongo -query '{"collection":"Report","filter":{"active":true},"limit":10}'
 db-query -db mongo -query '{"collection":"Jobs","pipeline":[{"$match":{"status":"done"}}]}'
 ```
@@ -85,7 +88,7 @@ Add to `.cursor/mcp.json`:
 }
 ```
 
-Place `config.toml` beside the binary. Tools: `list_databases`, `list_collections`, `run_query`, `ping_database`.
+Place `config.toml` beside the binary. Tools: `list_databases`, `list_schema`, `run_query`, `ping_database`. `list_collections` is a deprecated alias of `list_schema`.
 
 ## Development
 

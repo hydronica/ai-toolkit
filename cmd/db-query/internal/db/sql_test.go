@@ -92,7 +92,7 @@ func TestConnect_SQLite(t *testing.T) {
 	}
 	setup.Close()
 
-	runner, err := Connect(ctx, &config.SQLiteConfig{Name: "test", DB: path})
+	runner, err := Connect(ctx, &config.SQLiteConfig{Ident: "test", DB: path})
 	if err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}
@@ -108,4 +108,63 @@ func TestConnect_SQLite(t *testing.T) {
 	if got := output.Rows[0]["name"]; got != "alice" {
 		t.Fatalf("RunQuery() name = %v, want alice", got)
 	}
+}
+
+func TestRunner_ListSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "schema.sqlite")
+
+	setup, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open setup db: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE alpha (id INTEGER, name TEXT)`,
+		`CREATE TABLE beta (ok INTEGER)`,
+		`CREATE VIEW alpha_view AS SELECT id FROM alpha`,
+	} {
+		if _, err := setup.Exec(stmt); err != nil {
+			setup.Close()
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+	setup.Close()
+
+	runner, err := Connect(ctx, &config.SQLiteConfig{Ident: "test", DB: path})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	t.Cleanup(func() { runner.Close(ctx) })
+
+	fn := func(limit int) (QueryOutput, error) {
+		return runner.ListSchema(ctx, QueryOptions{Limit: limit})
+	}
+	cases := trial.Cases[int, QueryOutput]{
+		"lists tables and views with columns": {
+			Input: 0,
+			Expected: QueryOutput{
+				Columns:  catalogColumns,
+				RowCount: 4,
+				Rows: []map[string]interface{}{
+					{"object": "alpha", "kind": "table", "column": "id", "data_type": "INTEGER"},
+					{"object": "alpha", "kind": "table", "column": "name", "data_type": "TEXT"},
+					{"object": "alpha_view", "kind": "view", "column": "id", "data_type": "INTEGER"},
+					{"object": "beta", "kind": "table", "column": "ok", "data_type": "INTEGER"},
+				},
+			},
+		},
+		"limits complete objects not column rows": {
+			Input: 1,
+			Expected: QueryOutput{
+				Columns:   catalogColumns,
+				RowCount:  2,
+				Truncated: true,
+				Rows: []map[string]interface{}{
+					{"object": "alpha", "kind": "table", "column": "id", "data_type": "INTEGER"},
+					{"object": "alpha", "kind": "table", "column": "name", "data_type": "TEXT"},
+				},
+			},
+		},
+	}
+	trial.New(fn, cases).SubTest(t)
 }
