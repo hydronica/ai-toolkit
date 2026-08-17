@@ -1,21 +1,18 @@
 VERSION := $(shell git describe --tags --always --dirty)
-SCRIPTS := scripts
+GOBIN := $(CURDIR)/scripts
 
-.PHONY: build clean test test-coverage cuse db-query mcp
+.PHONY: build clean test test-coverage cuse db-query
 
 build: cuse db-query
 
 cuse:
-	cd cmd/cuse && go build -ldflags "-X main.version=$(VERSION)" -o ../../$(SCRIPTS)/cuse .
+	go -C cmd/cuse build -ldflags "-X main.version=$(VERSION)" -o $(GOBIN)/cuse .
 
 db-query:
-	cd cmd/db-query && go build -ldflags "-X main.version=$(VERSION)" -o ../../$(SCRIPTS)/db-query .
-
-mcp:
-	$(SCRIPTS)/db-query -mcp
+	go -C cmd/db-query build -ldflags "-X main.version=$(VERSION)" -o $(GOBIN)/db-query .
 
 clean:
-	rm -f $(SCRIPTS)/cuse $(SCRIPTS)/db-query
+	rm -f $(GOBIN)/cuse $(GOBIN)/db-query
 
 test:
 	go -C cmd/cuse test -cover ./...

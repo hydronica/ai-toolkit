@@ -22,7 +22,7 @@ Download the latest release for your platform from the [Releases](https://github
 ```bash
 make build cuse    # from repo root; builds to scripts/cuse
 # or
-cd cmd/cuse && go install .  # installs to $GOPATH/bin
+go install cmd/cuse  # installs to $GOPATH/bin
 ```
 
 ## Usage

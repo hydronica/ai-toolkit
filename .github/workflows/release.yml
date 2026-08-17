@@ -24,3 +24,14 @@ jobs:
           workdir: ./cmd/cuse
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cmd/db-query/go.mod
+          cache-dependency-path: cmd/db-query/go.sum
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+          workdir: ./cmd/db-query
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

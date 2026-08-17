@@ -43,8 +43,8 @@ Each `[[databases]]` entry needs a unique `name` and `type`. If only one databas
 Single read-only `SELECT` or `WITH` statement. Write keywords and multiple statements are blocked.
 
 ```bash
-db-query -db maindb -query "SELECT id, name FROM users LIMIT 5"
-db-query -db warehouse -query "SELECT count(*) FROM events" -format csv > out.csv
+db-query -db mySQL -query "SELECT id, name FROM users LIMIT 5"
+db-query -db bigQuery -query "SELECT count(*) FROM events" -format csv > out.csv
 echo "SELECT 1" | db-query -db mydb
 ```
 
@@ -53,11 +53,9 @@ echo "SELECT 1" | db-query -db mydb
 Uses JSON queries with `collection`, `filter`, `projection`, `sort`, `limit`, or `pipeline`:
 
 ```bash
-db-query -db reporting -list-collections
-
-db-query -db reporting -query '{"collection":"Report","filter":{"active":true},"limit":10}'
-
-db-query -db reporting -query '{"collection":"Jobs","pipeline":[{"$match":{"status":"done"}}]}'
+db-query -db mongo -list-collections
+db-query -db mongo -query '{"collection":"Report","filter":{"active":true},"limit":10}'
+db-query -db mongo -query '{"collection":"Jobs","pipeline":[{"$match":{"status":"done"}}]}'
 ```
 
 Write stages (`$out`, `$merge`) are rejected.
