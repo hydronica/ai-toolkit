@@ -21,7 +21,7 @@ type sqlRunner struct {
 	*sqlx.DB
 }
 
-func connectOracle(ctx context.Context, cfg *config.OracleConfig) (*sqlRunner, error) {
+func connectOracle(ctx context.Context, cfg *config.Oracle) (*sqlRunner, error) {
 	db, err := sqlx.Open("oracle", cfg.Connection)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
@@ -35,7 +35,7 @@ func connectOracle(ctx context.Context, cfg *config.OracleConfig) (*sqlRunner, e
 	return &sqlRunner{db}, nil
 }
 
-func connectMySQL(ctx context.Context, cfg *config.MySQLConfig) (*sqlRunner, error) {
+func connectMySQL(ctx context.Context, cfg *config.MySQL) (*sqlRunner, error) {
 	db, err := sqlx.Open("mysql", cfg.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
@@ -47,7 +47,7 @@ func connectMySQL(ctx context.Context, cfg *config.MySQLConfig) (*sqlRunner, err
 	return &sqlRunner{db}, nil
 }
 
-func connectSQLite(ctx context.Context, cfg *config.SQLiteConfig) (*sqlRunner, error) {
+func connectSQLite(ctx context.Context, cfg *config.SQLite) (*sqlRunner, error) {
 	db, err := sqlx.Open("sqlite", cfg.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)

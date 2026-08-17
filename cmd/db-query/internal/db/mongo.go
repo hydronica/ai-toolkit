@@ -36,7 +36,7 @@ type mongoQuery struct {
 	Limit      int      `json:"limit"`
 }
 
-func connectMongo(ctx context.Context, cfg *config.MongoConfig) (*mongoRunner, error) {
+func connectMongo(ctx context.Context, cfg *config.Mongo) (*mongoRunner, error) {
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.URI))
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)

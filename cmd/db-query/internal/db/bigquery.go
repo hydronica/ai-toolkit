@@ -19,7 +19,7 @@ type bigqueryRunner struct {
 	location string
 }
 
-func connectBigQuery(ctx context.Context, cfg *config.BigQueryConfig) (*bigqueryRunner, error) {
+func connectBigQuery(ctx context.Context, cfg *config.BigQuery) (*bigqueryRunner, error) {
 	project := strings.TrimSpace(cfg.Project)
 	if project == "" {
 		return nil, fmt.Errorf("bigquery requires project")
@@ -42,20 +42,20 @@ func connectBigQuery(ctx context.Context, cfg *config.BigQueryConfig) (*bigquery
 	}, nil
 }
 
-func bigqueryClientOptions(cfg *config.BigQueryConfig) ([]option.ClientOption, error) {
-	if cfg.UsesBigQueryADC() {
+func bigqueryClientOptions(cfg *config.BigQuery) ([]option.ClientOption, error) {
+	if cfg.UsesADC() {
 		return nil, nil
 	}
 
 	auth := strings.TrimSpace(cfg.Credentials)
 	if auth == "" {
-		return nil, fmt.Errorf(`bigquery auth "service_account" requires credentials (or bq-auth)`)
+		return nil, fmt.Errorf(`bigquery auth "service_account" requires credentials`)
 	}
 
 	return []option.ClientOption{option.WithCredentialsFile(auth)}, nil
 }
 
-const bigqueryADCHint = "run `gcloud auth application-default login` or set credentials/bq-auth for a service account"
+const bigqueryADCHint = "run `gcloud auth application-default login` or set credentials for a service account"
 
 func (r *bigqueryRunner) applyDefaults(q *bigquery.Query, dataset string) {
 	if dataset == "" {

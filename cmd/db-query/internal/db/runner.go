@@ -53,39 +53,39 @@ type Runner struct {
 	mongo    *mongoRunner
 }
 
-func Connect(ctx context.Context, cfg config.DatabaseConfig) (*Runner, error) {
+func Connect(ctx context.Context, cfg config.Database) (*Runner, error) {
 	switch c := cfg.(type) {
-	case *config.MongoConfig:
+	case *config.Mongo:
 		r, err := connectMongo(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		return &Runner{mongo: r}, nil
-	case *config.BigQueryConfig:
+	case *config.BigQuery:
 		r, err := connectBigQuery(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		return &Runner{bigquery: r}, nil
-	case *config.PostgresConfig:
+	case *config.Postgres:
 		r, err := connectPostgres(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		return &Runner{sql: r}, nil
-	case *config.OracleConfig:
+	case *config.Oracle:
 		r, err := connectOracle(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		return &Runner{sql: r}, nil
-	case *config.MySQLConfig:
+	case *config.MySQL:
 		r, err := connectMySQL(ctx, c)
 		if err != nil {
 			return nil, err
 		}
 		return &Runner{sql: r}, nil
-	case *config.SQLiteConfig:
+	case *config.SQLite:
 		r, err := connectSQLite(ctx, c)
 		if err != nil {
 			return nil, err

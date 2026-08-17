@@ -12,13 +12,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMySQLConfig_DSN(t *testing.T) {
-	fn := func(cfg config.MySQLConfig) (string, error) {
+func TestMySQL_DSN(t *testing.T) {
+	fn := func(cfg config.MySQL) (string, error) {
 		return cfg.DSN(), nil
 	}
-	cases := trial.Cases[config.MySQLConfig, string]{
+	cases := trial.Cases[config.MySQL, string]{
 		"builds tcp dsn with default port": {
-			Input: config.MySQLConfig{
+			Input: config.MySQL{
 				Host:     "db.example.com",
 				DB:       "app",
 				Username: "reader",
@@ -27,7 +27,7 @@ func TestMySQLConfig_DSN(t *testing.T) {
 			Expected: "reader:secret@tcp(db.example.com:3306)/app?checkConnLiveness=false&parseTime=true&timeout=5s&maxAllowedPacket=0",
 		},
 		"preserves explicit host port": {
-			Input: config.MySQLConfig{
+			Input: config.MySQL{
 				Host:     "db.example.com:3307",
 				DB:       "app",
 				Username: "reader",
@@ -35,7 +35,7 @@ func TestMySQLConfig_DSN(t *testing.T) {
 			Expected: "reader@tcp(db.example.com:3307)/app?checkConnLiveness=false&parseTime=true&timeout=5s&maxAllowedPacket=0",
 		},
 		"uses connection DSN when set": {
-			Input: config.MySQLConfig{
+			Input: config.MySQL{
 				Connection: "user:pass@tcp(host:3306)/mydb?parseTime=true",
 				Host:       "ignored",
 				Username:   "ignored",
@@ -47,29 +47,29 @@ func TestMySQLConfig_DSN(t *testing.T) {
 	trial.New(fn, cases).SubTest(t)
 }
 
-func TestSQLiteConfig_DSN(t *testing.T) {
-	fn := func(cfg config.SQLiteConfig) (string, error) {
+func TestSQLite_DSN(t *testing.T) {
+	fn := func(cfg config.SQLite) (string, error) {
 		return cfg.DSN(), nil
 	}
-	cases := trial.Cases[config.SQLiteConfig, string]{
+	cases := trial.Cases[config.SQLite, string]{
 		"builds read-only file dsn": {
-			Input:    config.SQLiteConfig{DB: "./data/app.sqlite"},
+			Input:    config.SQLite{DB: "./data/app.sqlite"},
 			Expected: "file:./data/app.sqlite?mode=ro",
 		},
 		"in-memory skips read-only": {
-			Input:    config.SQLiteConfig{DB: ":memory:"},
+			Input:    config.SQLite{DB: ":memory:"},
 			Expected: "file::memory:",
 		},
 		"uses connection override": {
-			Input:    config.SQLiteConfig{DB: "./ignored.sqlite", Connection: "file:/tmp/custom.sqlite?mode=ro&cache=shared"},
+			Input:    config.SQLite{DB: "./ignored.sqlite", Connection: "file:/tmp/custom.sqlite?mode=ro&cache=shared"},
 			Expected: "file:/tmp/custom.sqlite?mode=ro&cache=shared",
 		},
 		"enforces read only on connection override": {
-			Input:    config.SQLiteConfig{Connection: "file:/tmp/custom.sqlite"},
+			Input:    config.SQLite{Connection: "file:/tmp/custom.sqlite"},
 			Expected: "file:/tmp/custom.sqlite?mode=ro",
 		},
 		"replaces read write mode on connection override": {
-			Input:    config.SQLiteConfig{Connection: "file:/tmp/custom.sqlite?mode=rw&cache=shared"},
+			Input:    config.SQLite{Connection: "file:/tmp/custom.sqlite?mode=rw&cache=shared"},
 			Expected: "file:/tmp/custom.sqlite?mode=ro&cache=shared",
 		},
 	}
@@ -92,7 +92,7 @@ func TestConnect_SQLite(t *testing.T) {
 	}
 	setup.Close()
 
-	runner, err := Connect(ctx, &config.SQLiteConfig{Ident: "test", DB: path})
+	runner, err := Connect(ctx, &config.SQLite{DB: path})
 	if err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestRunner_ListSchema(t *testing.T) {
 	}
 	setup.Close()
 
-	runner, err := Connect(ctx, &config.SQLiteConfig{Ident: "test", DB: path})
+	runner, err := Connect(ctx, &config.SQLite{DB: path})
 	if err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}

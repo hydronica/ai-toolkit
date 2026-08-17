@@ -17,7 +17,7 @@ import (
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
 )
 
-func connectPostgres(ctx context.Context, cfg *config.PostgresConfig) (*sqlRunner, error) {
+func connectPostgres(ctx context.Context, cfg *config.Postgres) (*sqlRunner, error) {
 	if !cfg.SSLSkipHostnameVerify {
 		dsn := cfg.DSN()
 		db, err := sqlx.Open("postgres", dsn)
@@ -61,7 +61,7 @@ func connectPostgres(ctx context.Context, cfg *config.PostgresConfig) (*sqlRunne
 	return &sqlRunner{sqlxDB}, nil
 }
 
-func postgresTLSConfigSkipHostname(cfg *config.PostgresConfig) (*tls.Config, error) {
+func postgresTLSConfigSkipHostname(cfg *config.Postgres) (*tls.Config, error) {
 	if strings.TrimSpace(cfg.SSLRootcert) == "" {
 		return nil, errors.New("sslrootcert is required when ssl_skip_hostname_verify is true")
 	}

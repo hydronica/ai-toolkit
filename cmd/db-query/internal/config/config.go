@@ -56,7 +56,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) Find(name string) (DatabaseConfig, error) {
+func (c *Config) Find(name string) (Database, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		if len(c.Databases) == 1 {
@@ -81,15 +81,15 @@ func (c *Config) Names() []string {
 	return names
 }
 
-type DatabaseSummary struct {
+type Summary struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
 
-func (c *Config) Summaries() []DatabaseSummary {
-	out := make([]DatabaseSummary, len(c.Databases))
+func (c *Config) Summaries() []Summary {
+	out := make([]Summary, len(c.Databases))
 	for i, db := range c.Databases {
-		out[i] = DatabaseSummary{Name: db.Name(), Type: db.Type()}
+		out[i] = Summary{Name: db.Name(), Type: db.Type()}
 	}
 	return out
 }

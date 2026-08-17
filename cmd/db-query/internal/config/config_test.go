@@ -8,7 +8,7 @@ import (
 )
 
 func TestConfig_Validate(t *testing.T) {
-	fn := func(cfg Config) (DatabaseConfig, error) {
+	fn := func(cfg Config) (Database, error) {
 		if err := cfg.Validate(); err != nil {
 			return nil, err
 		}
@@ -17,56 +17,34 @@ func TestConfig_Validate(t *testing.T) {
 		}
 		return nil, nil
 	}
-	cases := trial.Cases[Config, DatabaseConfig]{
+	cases := trial.Cases[Config, Database]{
 		"requires at least one database": {
 			Input:       Config{},
 			ExpectedErr: errors.New("at least one"),
 		},
 		"requires database name": {
 			Input: Config{
-				Databases: DatabaseList{&PostgresConfig{Host: "h", DB: "d", Username: "u"}},
+				Databases: DatabaseList{&Postgres{Host: "h", DB: "d", Username: "u"}},
 			},
 			ExpectedErr: errors.New("name is required"),
 		},
 		"rejects duplicate names": {
 			Input: Config{
 				Databases: DatabaseList{
-					&OracleConfig{Ident: "a", Connection: "oracle://x"},
-					&OracleConfig{Ident: "a", Connection: "oracle://y"},
+					&Oracle{ID: "a", Connection: "oracle://x"},
+					&Oracle{ID: "a", Connection: "oracle://y"},
 				},
 			},
 			ExpectedErr: errors.New(`duplicate database name "a"`),
 		},
-		"normalizes signal-api bigquery field names": {
-			Input: Config{
-				Databases: DatabaseList{
-					&BigQueryConfig{
-						Ident:      "warehouse",
-						BQProject: "my-project",
-						BQDataset: "analytics",
-						BQAuth:    "/path/to/key.json",
-					},
-				},
-			},
-			Expected: &BigQueryConfig{
-				Ident:        "warehouse",
-				Project:     "my-project",
-				Dataset:     "analytics",
-				Credentials: "/path/to/key.json",
-				BQProject:   "my-project",
-				BQDataset:   "analytics",
-				BQAuth:      "/path/to/key.json",
-				Auth:        "service_account",
-			},
-		},
 		"defaults bigquery to adc without credentials": {
 			Input: Config{
 				Databases: DatabaseList{
-					&BigQueryConfig{Ident: "warehouse", Project: "my-project"},
+					&BigQuery{ID: "warehouse", Project: "my-project"},
 				},
 			},
-			Expected: &BigQueryConfig{
-				Ident:    "warehouse",
+			Expected: &BigQuery{
+				ID:      "warehouse",
 				Project: "my-project",
 				Auth:    "adc",
 			},
@@ -74,15 +52,15 @@ func TestConfig_Validate(t *testing.T) {
 		"defaults bigquery to service account when credentials set": {
 			Input: Config{
 				Databases: DatabaseList{
-					&BigQueryConfig{
-						Ident:        "warehouse",
+					&BigQuery{
+						ID:          "warehouse",
 						Project:     "my-project",
 						Credentials: "/path/to/key.json",
 					},
 				},
 			},
-			Expected: &BigQueryConfig{
-				Ident:        "warehouse",
+			Expected: &BigQuery{
+				ID:          "warehouse",
 				Project:     "my-project",
 				Credentials: "/path/to/key.json",
 				Auth:        "service_account",
@@ -91,16 +69,16 @@ func TestConfig_Validate(t *testing.T) {
 		"accepts explicit adc auth": {
 			Input: Config{
 				Databases: DatabaseList{
-					&BigQueryConfig{
-						Ident:        "warehouse",
+					&BigQuery{
+						ID:          "warehouse",
 						Project:     "my-project",
 						Auth:        "gcloud",
 						Credentials: "/ignored/when-adc.json",
 					},
 				},
 			},
-			Expected: &BigQueryConfig{
-				Ident:        "warehouse",
+			Expected: &BigQuery{
+				ID:          "warehouse",
 				Project:     "my-project",
 				Credentials: "/ignored/when-adc.json",
 				Auth:        "adc",
@@ -109,7 +87,7 @@ func TestConfig_Validate(t *testing.T) {
 		"requires credentials for service account auth": {
 			Input: Config{
 				Databases: DatabaseList{
-					&BigQueryConfig{Ident: "warehouse", Project: "my-project", Auth: "service_account"},
+					&BigQuery{ID: "warehouse", Project: "my-project", Auth: "service_account"},
 				},
 			},
 			ExpectedErr: errors.New("requires credentials"),
@@ -117,26 +95,26 @@ func TestConfig_Validate(t *testing.T) {
 		"accepts valid postgres entry": {
 			Input: Config{
 				Databases: DatabaseList{
-					&PostgresConfig{Ident: "iap", Host: "h", DB: "iap", Username: "u"},
+					&Postgres{ID: "postgres", Host: "h", DB: "postgres", Username: "u"},
 				},
 			},
-			Expected: &PostgresConfig{Ident: "iap", Host: "h", DB: "iap", Username: "u"},
+			Expected: &Postgres{ID: "postgres", Host: "h", DB: "postgres", Username: "u"},
 		},
 		"accepts postgres with connection URI": {
 			Input: Config{
 				Databases: DatabaseList{
-					&PostgresConfig{Ident: "iap", Connection: "postgres://u:p@h/db"},
+					&Postgres{ID: "postgres", Connection: "postgres://u:p@h/db"},
 				},
 			},
-			Expected: &PostgresConfig{Ident: "iap", Connection: "postgres://u:p@h/db"},
+			Expected: &Postgres{ID: "postgres", Connection: "postgres://u:p@h/db"},
 		},
 		"requires sslrootcert when ssl skip hostname verify": {
 			Input: Config{
 				Databases: DatabaseList{
-					&PostgresConfig{
-						Ident:                  "iap",
+					&Postgres{
+						ID:                    "postgres",
 						Host:                  "h",
-						DB:                    "iap",
+						DB:                    "postgres",
 						Username:              "u",
 						SSLSkipHostnameVerify: true,
 					},
@@ -147,31 +125,31 @@ func TestConfig_Validate(t *testing.T) {
 		"accepts valid mysql entry": {
 			Input: Config{
 				Databases: DatabaseList{
-					&MySQLConfig{Ident: "app", Host: "h", DB: "app", Username: "u"},
+					&MySQL{ID: "app", Host: "h", DB: "app", Username: "u"},
 				},
 			},
-			Expected: &MySQLConfig{Ident: "app", Host: "h", DB: "app", Username: "u"},
+			Expected: &MySQL{ID: "app", Host: "h", DB: "app", Username: "u"},
 		},
 		"accepts valid sqlite entry with db path": {
 			Input: Config{
 				Databases: DatabaseList{
-					&SQLiteConfig{Ident: "local", DB: "./data/app.sqlite"},
+					&SQLite{ID: "local", DB: "./data/app.sqlite"},
 				},
 			},
-			Expected: &SQLiteConfig{Ident: "local", DB: "./data/app.sqlite"},
+			Expected: &SQLite{ID: "local", DB: "./data/app.sqlite"},
 		},
 		"accepts valid sqlite entry with connection": {
 			Input: Config{
 				Databases: DatabaseList{
-					&SQLiteConfig{Ident: "local", Connection: "file:/tmp/app.sqlite?mode=ro"},
+					&SQLite{ID: "local", Connection: "file:/tmp/app.sqlite?mode=ro"},
 				},
 			},
-			Expected: &SQLiteConfig{Ident: "local", Connection: "file:/tmp/app.sqlite?mode=ro"},
+			Expected: &SQLite{ID: "local", Connection: "file:/tmp/app.sqlite?mode=ro"},
 		},
 		"requires sqlite db or connection": {
 			Input: Config{
 				Databases: DatabaseList{
-					&SQLiteConfig{Ident: "local"},
+					&SQLite{ID: "local"},
 				},
 			},
 			ExpectedErr: errors.New("sqlite requires db"),
@@ -179,10 +157,10 @@ func TestConfig_Validate(t *testing.T) {
 		"accepts valid mongo entry": {
 			Input: Config{
 				Databases: DatabaseList{
-					&MongoConfig{Ident: "reporting", URI: "mongodb://localhost", DBName: "reporting"},
+					&Mongo{ID: "reporting", URI: "mongodb://localhost", DBName: "reporting"},
 				},
 			},
-			Expected: &MongoConfig{Ident: "reporting", URI: "mongodb://localhost", DBName: "reporting"},
+			Expected: &Mongo{ID: "reporting", URI: "mongodb://localhost", DBName: "reporting"},
 		},
 	}
 	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
@@ -214,7 +192,7 @@ func TestConfig_Find(t *testing.T) {
 			Input: findInput{
 				cfg: Config{
 					Databases: DatabaseList{
-						&OracleConfig{Ident: "only", Connection: "oracle://x"},
+						&Oracle{ID: "only", Connection: "oracle://x"},
 					},
 				},
 			},
@@ -224,8 +202,8 @@ func TestConfig_Find(t *testing.T) {
 			Input: findInput{
 				cfg: Config{
 					Databases: DatabaseList{
-						&OracleConfig{Ident: "maindb", Connection: "oracle://x"},
-						&PostgresConfig{Ident: "iap", Host: "h", DB: "iap", Username: "u"},
+						&Oracle{ID: "oracle", Connection: "oracle://x"},
+						&Postgres{ID: "postgres", Host: "h", DB: "postgres", Username: "u"},
 					},
 				},
 			},
@@ -235,20 +213,20 @@ func TestConfig_Find(t *testing.T) {
 			Input: findInput{
 				cfg: Config{
 					Databases: DatabaseList{
-						&OracleConfig{Ident: "maindb", Connection: "oracle://x"},
-						&PostgresConfig{Ident: "iap", Host: "h", DB: "iap", Username: "u"},
+						&Oracle{ID: "oracle", Connection: "oracle://x"},
+						&Postgres{ID: "postgres", Host: "h", DB: "postgres", Username: "u"},
 					},
 				},
-				name: "iap",
+				name: "postgres",
 			},
-			Expected: "iap",
+			Expected: "postgres",
 		},
 		"reports missing database": {
 			Input: findInput{
 				cfg: Config{
 					Databases: DatabaseList{
-						&OracleConfig{Ident: "maindb", Connection: "oracle://x"},
-						&PostgresConfig{Ident: "iap", Host: "h", DB: "iap", Username: "u"},
+						&Oracle{ID: "oracle", Connection: "oracle://x"},
+						&Postgres{ID: "postgres", Host: "h", DB: "postgres", Username: "u"},
 					},
 				},
 				name: "missing",

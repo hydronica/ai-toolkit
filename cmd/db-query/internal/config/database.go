@@ -11,10 +11,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
-// DatabaseConfig is implemented by all database connection configurations.
-// The interface lives here because this package is the factory/orchestrator
-// that dispatches based on the TOML "type" discriminator.
-type DatabaseConfig interface {
+// Database is a configured database entry. The interface lives here because
+// this package dispatches on the TOML "type" discriminator.
+type Database interface {
 	Name() string
 	Type() string
 	Validate() error
@@ -22,7 +21,7 @@ type DatabaseConfig interface {
 
 // DatabaseList is the TOML-decoded slice of database configs. It implements
 // the hydronica/toml Unmarshaler interface to dispatch on the "type" field.
-type DatabaseList []DatabaseConfig
+type DatabaseList []Database
 
 func (dl *DatabaseList) UnmarshalTOML(data interface{}) error {
 	entries, ok := data.([]map[string]interface{})
@@ -34,7 +33,7 @@ func (dl *DatabaseList) UnmarshalTOML(data interface{}) error {
 		typStr, _ := raw["type"].(string)
 		typStr = strings.ToLower(strings.TrimSpace(typStr))
 
-		cfg, err := decodeDatabaseEntry(typStr, raw)
+		cfg, err := decodeEntry(typStr, raw)
 		if err != nil {
 			return fmt.Errorf("databases[%d]: %w", i, err)
 		}
@@ -43,20 +42,20 @@ func (dl *DatabaseList) UnmarshalTOML(data interface{}) error {
 	return nil
 }
 
-func decodeDatabaseEntry(typ string, raw map[string]interface{}) (DatabaseConfig, error) {
+func decodeEntry(typ string, raw map[string]interface{}) (Database, error) {
 	switch typ {
 	case "oracle":
-		return decodeAs[OracleConfig](raw)
+		return decodeAs[Oracle](raw)
 	case "postgres":
-		return decodeAs[PostgresConfig](raw)
+		return decodeAs[Postgres](raw)
 	case "mysql":
-		return decodeAs[MySQLConfig](raw)
+		return decodeAs[MySQL](raw)
 	case "sqlite":
-		return decodeAs[SQLiteConfig](raw)
+		return decodeAs[SQLite](raw)
 	case "bigquery":
-		return decodeAs[BigQueryConfig](raw)
+		return decodeAs[BigQuery](raw)
 	case "mongo", "mongodb":
-		return decodeAs[MongoConfig](raw)
+		return decodeAs[Mongo](raw)
 	case "":
 		return nil, errors.New("type is required")
 	default:
@@ -68,7 +67,7 @@ func decodeDatabaseEntry(typ string, raw map[string]interface{}) (DatabaseConfig
 // TOML key names match JSON tags on the target structs.
 func decodeAs[T any, PT interface {
 	*T
-	DatabaseConfig
+	Database
 }](raw map[string]interface{}) (PT, error) {
 	cfg := PT(new(T))
 	b, err := json.Marshal(raw)
@@ -81,25 +80,25 @@ func decodeAs[T any, PT interface {
 	return cfg, nil
 }
 
-// OracleConfig connects via a connection URI string.
-type OracleConfig struct {
-	Ident      string `json:"name" toml:"name"`
+// Oracle connects via a connection URI string.
+type Oracle struct {
+	ID         string `json:"name" toml:"name"`
 	Connection string `json:"connection" toml:"connection"`
 }
 
-func (c *OracleConfig) Name() string { return c.Ident }
-func (c *OracleConfig) Type() string { return "oracle" }
+func (c *Oracle) Name() string { return c.ID }
+func (c *Oracle) Type() string { return "oracle" }
 
-func (c *OracleConfig) Validate() error {
+func (c *Oracle) Validate() error {
 	if strings.TrimSpace(c.Connection) == "" {
 		return errors.New("oracle requires connection")
 	}
 	return nil
 }
 
-// PostgresConfig supports either a Connection URI or individual fields.
-type PostgresConfig struct {
-	Ident                 string `json:"name" toml:"name"`
+// Postgres supports either a Connection URI or individual fields.
+type Postgres struct {
+	ID                    string `json:"name" toml:"name"`
 	Connection            string `json:"connection" toml:"connection"`
 	Host                  string `json:"host" toml:"host"`
 	Username              string `json:"username" toml:"username"`
@@ -112,10 +111,10 @@ type PostgresConfig struct {
 	SSLSkipHostnameVerify bool   `json:"ssl_skip_hostname_verify" toml:"ssl_skip_hostname_verify"`
 }
 
-func (c *PostgresConfig) Name() string { return c.Ident }
-func (c *PostgresConfig) Type() string { return "postgres" }
+func (c *Postgres) Name() string { return c.ID }
+func (c *Postgres) Type() string { return "postgres" }
 
-func (c *PostgresConfig) Validate() error {
+func (c *Postgres) Validate() error {
 	if strings.TrimSpace(c.Connection) != "" {
 		return nil
 	}
@@ -129,7 +128,7 @@ func (c *PostgresConfig) Validate() error {
 }
 
 // DSN builds a connection string. If Connection is set it is returned directly.
-func (c *PostgresConfig) DSN() string {
+func (c *Postgres) DSN() string {
 	if conn := strings.TrimSpace(c.Connection); conn != "" {
 		return conn
 	}
@@ -155,9 +154,9 @@ func (c *PostgresConfig) DSN() string {
 	)
 }
 
-// MySQLConfig supports either a Connection DSN or individual fields.
-type MySQLConfig struct {
-	Ident      string `json:"name" toml:"name"`
+// MySQL supports either a Connection DSN or individual fields.
+type MySQL struct {
+	ID         string `json:"name" toml:"name"`
 	Connection string `json:"connection" toml:"connection"`
 	Host       string `json:"host" toml:"host"`
 	Username   string `json:"username" toml:"username"`
@@ -165,10 +164,10 @@ type MySQLConfig struct {
 	DB         string `json:"db" toml:"db"`
 }
 
-func (c *MySQLConfig) Name() string { return c.Ident }
-func (c *MySQLConfig) Type() string { return "mysql" }
+func (c *MySQL) Name() string { return c.ID }
+func (c *MySQL) Type() string { return "mysql" }
 
-func (c *MySQLConfig) Validate() error {
+func (c *MySQL) Validate() error {
 	if strings.TrimSpace(c.Connection) != "" {
 		return nil
 	}
@@ -179,7 +178,7 @@ func (c *MySQLConfig) Validate() error {
 }
 
 // DSN builds a MySQL DSN. If Connection is set it is returned directly.
-func (c *MySQLConfig) DSN() string {
+func (c *MySQL) DSN() string {
 	if conn := strings.TrimSpace(c.Connection); conn != "" {
 		return conn
 	}
@@ -200,17 +199,17 @@ func (c *MySQLConfig) DSN() string {
 	return cfg.FormatDSN()
 }
 
-// SQLiteConfig supports either a Connection URI or a file path via DB.
-type SQLiteConfig struct {
-	Ident      string `json:"name" toml:"name"`
+// SQLite supports either a Connection URI or a file path via DB.
+type SQLite struct {
+	ID         string `json:"name" toml:"name"`
 	Connection string `json:"connection" toml:"connection"`
 	DB         string `json:"db" toml:"db"`
 }
 
-func (c *SQLiteConfig) Name() string { return c.Ident }
-func (c *SQLiteConfig) Type() string { return "sqlite" }
+func (c *SQLite) Name() string { return c.ID }
+func (c *SQLite) Type() string { return "sqlite" }
 
-func (c *SQLiteConfig) Validate() error {
+func (c *SQLite) Validate() error {
 	if strings.TrimSpace(c.Connection) == "" && strings.TrimSpace(c.DB) == "" {
 		return errors.New("sqlite requires db (file path) or connection")
 	}
@@ -219,7 +218,7 @@ func (c *SQLiteConfig) Validate() error {
 
 // DSN returns the sqlite connection string with read-only mode enforced.
 // In-memory databases are exempt from read-only since they start empty.
-func (c *SQLiteConfig) DSN() string {
+func (c *SQLite) DSN() string {
 	if conn := strings.TrimSpace(c.Connection); conn != "" {
 		if strings.Contains(conn, ":memory:") {
 			return conn
@@ -269,33 +268,30 @@ func setSQLiteModeReadOnly(query string) string {
 	return out
 }
 
-// BigQueryConfig stores credentials and project information for BigQuery.
-type BigQueryConfig struct {
-	Ident       string `json:"name" toml:"name"`
+// BigQuery holds project, dataset, location, and credentials.
+type BigQuery struct {
+	ID          string `json:"name" toml:"name"`
 	Project     string `json:"project" toml:"project"`
 	Dataset     string `json:"dataset" toml:"dataset"`
 	Location    string `json:"location" toml:"location"`
 	Credentials string `json:"credentials" toml:"credentials"`
-	BQProject   string `json:"bq-project" toml:"bq-project"`
-	BQDataset   string `json:"bq-dataset" toml:"bq-dataset"`
-	BQAuth      string `json:"bq-auth" toml:"bq-auth"`
 	Auth        string `json:"auth" toml:"auth"`
 }
 
-func (c *BigQueryConfig) Name() string { return c.Ident }
-func (c *BigQueryConfig) Type() string { return "bigquery" }
+func (c *BigQuery) Name() string { return c.ID }
+func (c *BigQuery) Type() string { return "bigquery" }
 
-func (c *BigQueryConfig) Validate() error {
-	c.normalize()
+func (c *BigQuery) Validate() error {
+	c.Auth = normalizeAuthMode(c.Auth, c.Credentials)
 	if strings.TrimSpace(c.Project) == "" {
-		return errors.New("bigquery requires project (or bq-project)")
+		return errors.New("bigquery requires project")
 	}
 	switch c.Auth {
 	case "adc":
 		return nil
 	case "service_account":
 		if strings.TrimSpace(c.Credentials) == "" {
-			return errors.New(`bigquery auth "service_account" requires credentials (or bq-auth)`)
+			return errors.New(`bigquery auth "service_account" requires credentials`)
 		}
 		return nil
 	default:
@@ -303,20 +299,7 @@ func (c *BigQueryConfig) Validate() error {
 	}
 }
 
-func (c *BigQueryConfig) normalize() {
-	if strings.TrimSpace(c.Project) == "" {
-		c.Project = strings.TrimSpace(c.BQProject)
-	}
-	if strings.TrimSpace(c.Dataset) == "" {
-		c.Dataset = strings.TrimSpace(c.BQDataset)
-	}
-	if strings.TrimSpace(c.Credentials) == "" {
-		c.Credentials = strings.TrimSpace(c.BQAuth)
-	}
-	c.Auth = normalizeBigQueryAuthMode(c.Auth, c.Credentials)
-}
-
-func normalizeBigQueryAuthMode(auth, credentials string) string {
+func normalizeAuthMode(auth, credentials string) string {
 	auth = strings.ToLower(strings.TrimSpace(auth))
 	switch auth {
 	case "", "adc", "gcloud", "application_default", "application-default":
@@ -331,22 +314,22 @@ func normalizeBigQueryAuthMode(auth, credentials string) string {
 	}
 }
 
-// UsesBigQueryADC reports whether the config uses Application Default Credentials.
-func (c *BigQueryConfig) UsesBigQueryADC() bool {
+// UsesADC reports whether the config uses Application Default Credentials.
+func (c *BigQuery) UsesADC() bool {
 	return c.Auth == "adc"
 }
 
-// MongoConfig stores URI and database name for MongoDB connections.
-type MongoConfig struct {
-	Ident  string `json:"name" toml:"name"`
+// Mongo stores URI and database name for MongoDB connections.
+type Mongo struct {
+	ID     string `json:"name" toml:"name"`
 	URI    string `json:"uri" toml:"uri"`
 	DBName string `json:"db_name" toml:"db_name"`
 }
 
-func (c *MongoConfig) Name() string { return c.Ident }
-func (c *MongoConfig) Type() string { return "mongo" }
+func (c *Mongo) Name() string { return c.ID }
+func (c *Mongo) Type() string { return "mongo" }
 
-func (c *MongoConfig) Validate() error {
+func (c *Mongo) Validate() error {
 	if strings.TrimSpace(c.URI) == "" || strings.TrimSpace(c.DBName) == "" {
 		return errors.New("mongo requires uri and db_name")
 	}
