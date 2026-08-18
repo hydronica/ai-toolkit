@@ -14,9 +14,9 @@ type Config struct {
 	DB              string        `flag:"db" comment:"Database name from config"`
 	ListDBs         bool          `flag:"list-dbs" comment:"List configured databases and exit"`
 	Dataset         string        `flag:"dataset" comment:"BigQuery: default dataset for unqualified table names"`
-	Format          string        `flag:"format,f" comment:"Output format: json, csv, table"`
-	Limit           int           `flag:"limit,l" comment:"Maximum rows to return (0 = unlimited); for -list-schema, maximum objects"`
-	Timeout         time.Duration `flag:"timeout,t" comment:"Query timeout"`
+	Format          string        `flag:"format" comment:"Output format: json, csv, table"`
+	Limit           int           `flag:"limit" comment:"Maximum rows to return (0 = unlimited); for -list-schema, maximum objects"`
+	Timeout         time.Duration `flag:"timeout" comment:"Query timeout"`
 	Ping            bool          `flag:"ping" comment:"Test database connection and exit"`
 	ListSchema      bool          `flag:"list-schema" comment:"List tables, views, or collections and their columns, then exit"`
 	ListCollections bool          `flag:"list-collections" comment:"Deprecated alias of -list-schema"`
