@@ -10,7 +10,7 @@ import (
 )
 
 type Config struct {
-	Query           string        `flag:"query,q" comment:"SQL SELECT query to execute"`
+	Query           string        `flag:"query" comment:"SQL SELECT query to execute"`
 	DB              string        `flag:"db" comment:"Database name from config"`
 	ListDBs         bool          `flag:"list-dbs" comment:"List configured databases and exit"`
 	Dataset         string        `flag:"dataset" comment:"BigQuery: default dataset for unqualified table names"`
@@ -30,7 +30,8 @@ func DefaultPath() string {
 	if err != nil {
 		return "config.toml"
 	}
-	return filepath.Join(filepath.Dir(exe), "config.toml")
+	path := filepath.Join(filepath.Dir(exe), "config.toml")
+	return path
 }
 
 func (c *Config) Validate() error {
