@@ -1,4 +1,6 @@
 .env
 scripts/cuse
+scripts/db-query
 coverage.out
 coverage.html
+cmd/db-query/bin/

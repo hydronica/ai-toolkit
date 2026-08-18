@@ -1,4 +1,4 @@
-module cuse
+module github.com/hydronica/ai-toolkit/cmd/cuse
 
 go 1.26
 

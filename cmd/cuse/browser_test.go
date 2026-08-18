@@ -111,26 +111,20 @@ Default=1
 }
 
 func TestFindFirefoxBrowser(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("test manipulates PATH which only affects Linux Firefox detection")
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "firefox")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
 	}
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
 
-	t.Run("no firefox binary on PATH or standard locations", func(t *testing.T) {
-		home, err := os.MkdirTemp("", "cuse-home-*")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer os.RemoveAll(home)
-
-		oldPath := os.Getenv("PATH")
-		os.Setenv("PATH", filepath.Join(home, "empty-bin"))
-		defer os.Setenv("PATH", oldPath)
-
-		got := findFirefoxBrowser()
-		if got != "" {
-			t.Errorf("expected empty string when no Firefox found, got %q", got)
-		}
-	})
+	got := findFirefoxBrowser()
+	if got != fake {
+		t.Fatalf("findFirefoxBrowser() = %q, want %q", got, fake)
+	}
 }
 
 func TestReadFirefoxCookie(t *testing.T) {

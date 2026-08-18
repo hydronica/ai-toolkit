@@ -1,0 +1,227 @@
+package db
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"cloud.google.com/go/bigquery"
+	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
+
+	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
+)
+
+type bigqueryRunner struct {
+	client   *bigquery.Client
+	dataset  string
+	location string
+}
+
+func connectBigQuery(ctx context.Context, cfg *config.BigQuery) (*bigqueryRunner, error) {
+	project := strings.TrimSpace(cfg.Project)
+	if project == "" {
+		return nil, fmt.Errorf("bigquery requires project")
+	}
+
+	opts, err := bigqueryClientOptions(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := bigquery.NewClient(ctx, project, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+
+	return &bigqueryRunner{
+		client:   client,
+		dataset:  strings.TrimSpace(cfg.Dataset),
+		location: strings.TrimSpace(cfg.Location),
+	}, nil
+}
+
+func bigqueryClientOptions(cfg *config.BigQuery) ([]option.ClientOption, error) {
+	if cfg.UsesADC() {
+		return nil, nil
+	}
+
+	auth := strings.TrimSpace(cfg.Credentials)
+	if auth == "" {
+		return nil, fmt.Errorf(`bigquery auth "service_account" requires credentials`)
+	}
+
+	return []option.ClientOption{option.WithCredentialsFile(auth)}, nil
+}
+
+const bigqueryADCHint = "run `gcloud auth application-default login` or set credentials for a service account"
+
+func (r *bigqueryRunner) applyDefaults(q *bigquery.Query, dataset string) {
+	if dataset == "" {
+		dataset = r.dataset
+	}
+	if dataset != "" {
+		q.DefaultProjectID = r.client.Project()
+		q.DefaultDatasetID = dataset
+	}
+	if r.location != "" {
+		q.Location = r.location
+	}
+}
+
+func (r *bigqueryRunner) Ping(ctx context.Context, opts QueryOptions) error {
+	q := r.client.Query("SELECT 1")
+	q.DryRun = true
+	r.applyDefaults(q, opts.Dataset)
+
+	job, err := q.Run(ctx)
+	if err != nil {
+		return fmt.Errorf("ping: %w; %s", err, bigqueryADCHint)
+	}
+	if status := job.LastStatus(); status != nil && status.Err() != nil {
+		return fmt.Errorf("ping: %w; %s", status.Err(), bigqueryADCHint)
+	}
+	return nil
+}
+
+func (r *bigqueryRunner) Close() error {
+	return r.client.Close()
+}
+
+func (r *bigqueryRunner) ListSchema(ctx context.Context, opts QueryOptions) (QueryOutput, error) {
+	dataset := strings.TrimSpace(opts.Dataset)
+	if dataset == "" {
+		dataset = r.dataset
+	}
+	if dataset == "" {
+		return QueryOutput{}, fmt.Errorf("bigquery list-schema requires -dataset")
+	}
+
+	it := r.client.Dataset(dataset).Tables(ctx)
+	b := newCatalogBuilder(opts.Limit)
+	for {
+		tbl, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return QueryOutput{}, fmt.Errorf("list schema: %w", err)
+		}
+		if !b.allowObject() {
+			break
+		}
+
+		meta, err := tbl.Metadata(ctx)
+		if err != nil {
+			return QueryOutput{}, fmt.Errorf("list schema: %w", err)
+		}
+
+		kind := sqlTableKind(string(meta.Type))
+		if len(meta.Schema) == 0 {
+			if !b.add(tbl.TableID, kind, "", "") {
+				break
+			}
+			continue
+		}
+
+		stopped := false
+		for _, field := range meta.Schema {
+			if !b.add(tbl.TableID, kind, field.Name, string(field.Type)) {
+				stopped = true
+				break
+			}
+		}
+		if stopped {
+			break
+		}
+	}
+	return b.result(), nil
+}
+
+func (r *bigqueryRunner) RunQuery(ctx context.Context, query string, opts QueryOptions) (QueryOutput, error) {
+	bqQuery := r.client.Query(query)
+	r.applyDefaults(bqQuery, opts.Dataset)
+
+	job, err := bqQuery.Run(ctx)
+	if err != nil {
+		return QueryOutput{}, fmt.Errorf("query: %w", err)
+	}
+
+	status, err := job.Wait(ctx)
+	if err != nil {
+		return QueryOutput{}, fmt.Errorf("wait: %w", err)
+	}
+	if status.Err() != nil {
+		return QueryOutput{}, fmt.Errorf("query: %w", status.Err())
+	}
+
+	it, err := job.Read(ctx)
+	if err != nil {
+		return QueryOutput{}, fmt.Errorf("read: %w", err)
+	}
+
+	output := QueryOutput{
+		Columns: schemaColumnNames(it.Schema),
+		Rows:    make([]map[string]interface{}, 0),
+	}
+
+	limit := opts.Limit
+	for {
+		if limit > 0 && output.RowCount >= limit {
+			output.Truncated = true
+			break
+		}
+
+		var row []bigquery.Value
+		err := it.Next(&row)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return QueryOutput{}, fmt.Errorf("next row: %w", err)
+		}
+
+		record := make(map[string]interface{}, len(it.Schema))
+		for i, field := range it.Schema {
+			if i >= len(row) {
+				break
+			}
+			record[field.Name] = normalizeBigQueryValue(row[i])
+		}
+
+		output.Rows = append(output.Rows, record)
+		output.RowCount++
+	}
+
+	if len(output.Columns) == 0 && len(output.Rows) > 0 {
+		output.Columns = sortedKeys(output.Rows[0])
+	}
+
+	return output, nil
+}
+
+func schemaColumnNames(schema bigquery.Schema) []string {
+	columns := make([]string, len(schema))
+	for i, field := range schema {
+		columns[i] = field.Name
+	}
+	return columns
+}
+
+func normalizeBigQueryValue(value bigquery.Value) interface{} {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case time.Time:
+		return v.UTC().Format(time.RFC3339Nano)
+	case []bigquery.Value:
+		out := make([]interface{}, len(v))
+		for i, item := range v {
+			out[i] = normalizeBigQueryValue(item)
+		}
+		return out
+	default:
+		return v
+	}
+}

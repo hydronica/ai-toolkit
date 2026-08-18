@@ -1,0 +1,19 @@
+version: 2
+builds:
+  - ldflags:
+      - -X main.version={{.Version}}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: binary
+    name_template: "db-query_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "db-query_checksums.txt"
+
+changelog:
+  disable: true
+
+release:
+  mode: append

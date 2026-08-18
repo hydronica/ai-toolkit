@@ -20,10 +20,9 @@ Download the latest release for your platform from the [Releases](https://github
 ### From source
 
 ```bash
-cd cuse
-make build    # builds to ../scripts/cuse
+make build cuse    # from repo root; builds to scripts/cuse
 # or
-go install .  # installs to $GOPATH/bin
+go install cmd/cuse  # installs to $GOPATH/bin
 ```
 
 ## Usage
