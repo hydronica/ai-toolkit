@@ -104,9 +104,39 @@ func printTable(r *UsageResult) {
 		fmt.Printf("Time remaining:  %s (%.1f%% elapsed)\n", formatTimeRemaining(remaining), elapsedPct)
 	}
 	if r.MembershipType != "" {
-		fmt.Printf("Plan:            %s\n", r.MembershipType)
+		planLine := r.MembershipType
+		if r.LimitType == "team" {
+			planLine += " (team limit)"
+		}
+		fmt.Printf("Plan:            %s\n", planLine)
 	}
 
+	if r.LimitType == "team" && r.RequestsLimit > 0 {
+		printTeamLimitUsage(r, hasPeriod)
+	} else {
+		printPlanUsage(r, hasPeriod)
+	}
+
+	fmt.Println()
+	if r.LimitType == "team" {
+		if r.Team != nil && r.Team.Enabled {
+			printTeamUsage(r.Team, true)
+		}
+	} else {
+		if !r.OnDemandEnabled {
+			fmt.Println("On-demand:       Disabled")
+		} else {
+			fmt.Printf("On-demand:       %s spent\n", formatDollars(r.OnDemandUsed))
+		}
+		if r.Team != nil {
+			fmt.Println()
+			printTeamUsage(r.Team, false)
+		}
+	}
+	fmt.Println()
+}
+
+func printPlanUsage(r *UsageResult, hasPeriod bool) {
 	line := "Total usage:"
 	if hasPeriod {
 		line += "     (Tip: keep usage below elapsed %)"
@@ -119,26 +149,31 @@ func printTable(r *UsageResult) {
 		pct := requestPercent(used, r.RequestsLimit)
 		fmt.Printf("  Requests:      %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
 	}
-
-	fmt.Println()
-	if !r.OnDemandEnabled {
-		fmt.Println("On-demand:       Disabled")
-	} else {
-		fmt.Printf("On-demand:       %s spent\n", formatDollars(r.OnDemandUsed))
-	}
-
-	if r.Team != nil {
-		fmt.Println()
-		printTeamUsage(r.Team)
-	}
-	fmt.Println()
 }
 
-func printTeamUsage(t *TeamUsageInfo) {
+func printTeamLimitUsage(r *UsageResult, hasPeriod bool) {
+	line := "Included usage:"
+	if hasPeriod {
+		line += "  (Tip: keep usage below elapsed %)"
+	}
+	fmt.Println(line)
+	used := requestUsed(r)
+	pct := requestPercent(used, r.RequestsLimit)
+	fmt.Printf("  Usage:         %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
+	if r.RequestsRemaining != nil {
+		fmt.Printf("  Remaining:     %.0f\n", *r.RequestsRemaining)
+	}
+}
+
+func printTeamUsage(t *TeamUsageInfo, teamLimit bool) {
 	if !t.Enabled {
 		return
 	}
-	fmt.Printf("Team usage:      %s spent\n", formatDollars(t.Used))
+	if teamLimit {
+		fmt.Printf("Team on-demand:  %s spent\n", formatDollars(t.Used))
+	} else {
+		fmt.Printf("Team usage:      %s spent\n", formatDollars(t.Used))
+	}
 	if t.Limit != nil {
 		fmt.Printf("  Limit:         %s\n", formatDollars(*t.Limit))
 	}

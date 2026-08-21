@@ -6,9 +6,11 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hydronica/trial"
 )
 
@@ -321,8 +323,91 @@ On-demand:       Disabled
 `,
 			},
 		},
+		"enterprise_team_limit": {
+			Input: `{
+  "billingCycleStart": "2026-08-01T00:00:00.000Z",
+  "billingCycleEnd": "2026-09-01T00:00:00.000Z",
+  "membershipType": "enterprise",
+  "limitType": "team",
+  "isUnlimited": false,
+  "autoModelSelectedDisplayMessage": "Youve used 0% of your included total usage,namedModelSelectedDisplayMessage:Youve used 0% of your included API usage",
+  "individualUsage": {
+    "overall": {
+      "enabled": true,
+      "used": 233,
+      "limit": 50000,
+      "remaining": 49767
+    }
+  },
+  "teamUsage": {
+    "onDemand": {
+      "enabled": true,
+      "used": 578,
+      "limit": 2300000,
+      "remaining": 2299422
+    }
+  }
+}`,
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					PeriodStart:       time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+					PeriodEnd:         time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+					MembershipType:    "enterprise",
+					LimitType:         "team",
+					AutoPercent:       0,
+					APIPercent:        0,
+					RequestsUsed:      233,
+					RequestsLimit:     50000,
+					RequestsRemaining: floatPtr(49767),
+					Team: &TeamUsageInfo{
+						Enabled:   true,
+						Used:      578,
+						Limit:     floatPtr(2300000),
+						Remaining: floatPtr(2299422),
+					},
+				},
+				output: `Cursor usage
+-------------
+Billing period:  2026-08-01T00:00 UTC → 2026-09-01T00:00 UTC
+Plan:            enterprise (team limit)
+Included usage:  (Tip: keep usage below elapsed %)
+  Usage:         0.5% (233/50000)
+  Remaining:     49767
+
+Team on-demand:  $5.78 spent
+  Limit:         $23,000.00
+  Remaining:     $22,994.22
+
+`,
+			},
+		},
 	}
-	trial.New(fn, cases).SubTest(t)
+	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
+		got := actual.(parseUsageOutput)
+		want := expected.(parseUsageOutput)
+		if diff := cmp.Diff(want.result, got.result); diff != "" {
+			return false, "result:" + diff
+		}
+		gotOut := normalizeUsageOutput(got.output)
+		wantOut := normalizeUsageOutput(want.output)
+		if gotOut != wantOut {
+			return false, fmt.Sprintf("output:\n%s", cmp.Diff(wantOut, gotOut))
+		}
+		return true, ""
+	}).SubTest(t)
+}
+
+// normalizeUsageOutput strips lines that depend on the current clock.
+func normalizeUsageOutput(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Time remaining:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func floatPtr(v float64) *float64 {
@@ -330,6 +415,10 @@ func floatPtr(v float64) *float64 {
 }
 
 func capturePrintTable(r *UsageResult) string {
+	if loc, err := time.LoadLocation("UTC"); err == nil {
+		time.Local = loc
+	}
+
 	oldStdout := os.Stdout
 	readPipe, writePipe, err := os.Pipe()
 	if err != nil {
