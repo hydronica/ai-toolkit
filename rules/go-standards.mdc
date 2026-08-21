@@ -47,7 +47,13 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
 - Beyond three values—or when the same bundle of fields is returned from multiple functions—prefer a named result struct with concrete fields.
 - Name result structs for their role (`FetchUserResult`, `ParseOutput`), not generic `Result`.
 
-## Concurrency essentials
+### Helpers
+
+- Do **not** add single-line function wrappers—especially around one stdlib call (e.g. `func join(a []string) string { return strings.Join(a, " + ") }`). Inline at the call site.
+- Extract a helper when it encapsulates non-trivial logic, is reused in multiple places, or materially clarifies a long/complex function.
+- Prefer naming helpers for **what** they do (`parseVoterRecord`), not for syntactic sugar around a single expression.
+
+### Concurrency essentials
 
 - Every goroutine needs a clear lifetime and shutdown path (`WaitGroup`, context cancellation, bounded worker pools).
 - Choose primitives by intent:
@@ -93,6 +99,13 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
 2. “For testing only” alone → rarely—fake at boundary instead  
 3. Library exporting wide interfaces consumers did not ask for → avoid  
 4. Single concrete type forever → skip the interface  
+
+### New helper?
+
+1. Single stdlib call or one-liner at one call site → **inline**  
+2. Non-trivial logic duplicated in 3+ places → extract  
+3. Long function where a named block aids reading → extract with real behavior  
+4. Wrapper exists only to rename `strings.Join` / `fmt.Sprintf` / etc. → **do not extract**  
 
 ## Philosophy (cheat sheet)
 

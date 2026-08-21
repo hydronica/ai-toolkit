@@ -25,6 +25,9 @@ suitable for pasting into a PR description or command follow-up.
 When an upstream remote exists, the integration base defaults to upstream (not
 origin), so fork workflows with a stale origin/main still compare against the
 real merge target.
+
+Branch push status checks every remote (not only origin) and reports whether
+HEAD matches the remote branch. PR target is derived from the push remote.
 EOF
 }
 
@@ -325,44 +328,335 @@ detect_pr_template() {
   PR_TEMPLATE_GH_FLAG="--body-file <filled-template-file>"
 }
 
-# Detect if origin is a fork and find PR target repo
+# First configured remote name, if any.
+first_remote() {
+  local remote=""
+  while IFS= read -r remote; do
+    [[ -n "${remote}" ]] || continue
+    echo "${remote}"
+    return 0
+  done < <(git remote)
+  return 1
+}
+
+# GitHub owner/repo slug for a remote, or empty.
+remote_repo_slug() {
+  local url=""
+  url="$(git remote get-url "$1" 2>/dev/null || true)"
+  [[ -n "${url}" ]] || return 1
+  parse_repo_slug "${url}"
+}
+
+# SHA of refs/heads/<branch> on <remote> (exact match), or empty.
+remote_branch_sha() {
+  local remote="$1"
+  local branch="$2"
+  local line=""
+  line="$(git ls-remote --heads "${remote}" "refs/heads/${branch}" 2>/dev/null || true)"
+  printf '%s\n' "${line}" | awk -v ref="refs/heads/${branch}" '$2 == ref { print $1; exit }'
+}
+
+# Configured git push remote for a local branch (pushRemote, pushDefault, @{push}, or upstream).
+configured_push_remote() {
+  local branch="$1"
+  local remote="" push_ref="" rest=""
+  remote="$(git config --get "branch.${branch}.pushRemote" 2>/dev/null || true)"
+  if [[ -n "${remote}" ]]; then
+    echo "${remote}"
+    return 0
+  fi
+  remote="$(git config --get remote.pushDefault 2>/dev/null || true)"
+  if [[ -n "${remote}" ]]; then
+    echo "${remote}"
+    return 0
+  fi
+  push_ref="$(git rev-parse --symbolic-full-name '@{push}' 2>/dev/null || true)"
+  case "${push_ref}" in
+    refs/remotes/*)
+      rest="${push_ref#refs/remotes/}"
+      echo "${rest%%/*}"
+      return 0
+      ;;
+  esac
+  remote="$(git config --get "branch.${branch}.remote" 2>/dev/null || true)"
+  if [[ -n "${remote}" ]]; then
+    echo "${remote}"
+    return 0
+  fi
+  return 1
+}
+
+# Compare HEAD SHA to a remote branch SHA: up-to-date|ahead|behind|diverged|differ|missing.
+compare_head_to_remote_sha() {
+  local remote_sha="$1"
+  local head_sha="$2"
+  if [[ -z "${remote_sha}" ]]; then
+    echo "missing"
+    return 0
+  fi
+  if [[ "${remote_sha}" == "${head_sha}" ]]; then
+    echo "up-to-date"
+    return 0
+  fi
+  if git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    if git merge-base --is-ancestor "${remote_sha}" "${head_sha}" 2>/dev/null; then
+      echo "ahead"
+      return 0
+    fi
+    if git merge-base --is-ancestor "${head_sha}" "${remote_sha}" 2>/dev/null; then
+      echo "behind"
+      return 0
+    fi
+    echo "diverged"
+    return 0
+  fi
+  echo "differ"
+}
+
+# SHA for a remote recorded in PUSH_MATCHES (remote<TAB>sha lines).
+sha_from_push_matches() {
+  local want="$1"
+  local remote="" sha=""
+  [[ -n "${PUSH_MATCHES}" ]] || return 1
+  while IFS=$'\t' read -r remote sha; do
+    if [[ "${remote}" == "${want}" ]]; then
+      echo "${sha}"
+      return 0
+    fi
+  done <<< "${PUSH_MATCHES}"
+  return 1
+}
+
+# Append a unique remote name to PUSH_PICK_ORDER.
+append_push_pick_order() {
+  local r="$1"
+  [[ -n "${r}" ]] || return 0
+  : "${PUSH_PICK_ORDER:=}"
+  case $'\n'"${PUSH_PICK_ORDER}"$'\n' in
+    *$'\n'"${r}"$'\n'*) return 0 ;;
+  esac
+  PUSH_PICK_ORDER+="${r}"$'\n'
+}
+
+# Pick a remote from PUSH_MATCHES. Mode: uptodate (HEAD match) or any.
+pick_push_remote_from_matches() {
+  local mode="$1"
+  local configured="$2"
+  local head_sha="$3"
+  local candidate="" sha=""
+  PUSH_PICK_ORDER=""
+
+  append_push_pick_order "${configured}"
+  append_push_pick_order "origin"
+  while IFS= read -r candidate; do
+    append_push_pick_order "${candidate}"
+  done < <(git remote)
+
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    sha="$(sha_from_push_matches "${candidate}" || true)"
+    [[ -n "${sha}" ]] || continue
+    if [[ "${mode}" == "uptodate" && "${sha}" != "${head_sha}" ]]; then
+      continue
+    fi
+    echo "${candidate}"
+    return 0
+  done <<< "${PUSH_PICK_ORDER}"
+  return 1
+}
+
+# Populate PUSH_* globals: which remotes have CURRENT_BRANCH and whether HEAD is pushed.
+resolve_branch_push() {
+  local branch="$1"
+  local head_sha="$2"
+  local remote="" sha="" configured=""
+
+  PUSH_REMOTE=""
+  PUSH_REMOTE_SHA=""
+  PUSH_STATUS="missing"
+  PUSH_AHEAD=""
+  PUSH_BEHIND=""
+  PUSH_MATCHES=""
+  PUSH_HINT_REMOTE=""
+  BRANCH_PUSH_OK="false"
+
+  if [[ "${branch}" == "HEAD" || -z "${branch}" ]]; then
+    PUSH_STATUS="detached"
+    return 0
+  fi
+
+  configured="$(configured_push_remote "${branch}" || true)"
+  if [[ -n "${configured}" ]]; then
+    PUSH_HINT_REMOTE="${configured}"
+  elif git remote get-url origin >/dev/null 2>&1; then
+    PUSH_HINT_REMOTE="origin"
+  else
+    PUSH_HINT_REMOTE="$(first_remote || true)"
+  fi
+
+  while IFS= read -r remote; do
+    [[ -n "${remote}" ]] || continue
+    sha="$(remote_branch_sha "${remote}" "${branch}")"
+    if [[ -n "${sha}" ]]; then
+      PUSH_MATCHES+="${remote}"$'\t'"${sha}"$'\n'
+    fi
+  done < <(git remote)
+
+  PUSH_REMOTE="$(pick_push_remote_from_matches "uptodate" "${configured}" "${head_sha}" || true)"
+  if [[ -z "${PUSH_REMOTE}" ]]; then
+    PUSH_REMOTE="$(pick_push_remote_from_matches "any" "${configured}" "${head_sha}" || true)"
+  fi
+
+  if [[ -z "${PUSH_REMOTE}" ]]; then
+    PUSH_STATUS="missing"
+    return 0
+  fi
+
+  PUSH_REMOTE_SHA="$(sha_from_push_matches "${PUSH_REMOTE}" || true)"
+  PUSH_STATUS="$(compare_head_to_remote_sha "${PUSH_REMOTE_SHA}" "${head_sha}")"
+  case "${PUSH_STATUS}" in
+    up-to-date)
+      BRANCH_PUSH_OK="true"
+      ;;
+    ahead)
+      PUSH_AHEAD="$(git rev-list --count "${PUSH_REMOTE_SHA}..${head_sha}" 2>/dev/null || echo "?")"
+      ;;
+    behind)
+      PUSH_BEHIND="$(git rev-list --count "${head_sha}..${PUSH_REMOTE_SHA}" 2>/dev/null || echo "?")"
+      ;;
+  esac
+}
+
+# Human-readable status of one remote-tracking branch vs HEAD.
+describe_remote_branch_status() {
+  local remote="$1"
+  local sha="$2"
+  local status="" n=""
+  status="$(compare_head_to_remote_sha "${sha}" "${HEAD_SHA}")"
+  case "${status}" in
+    up-to-date)
+      echo "${remote}/${CURRENT_BRANCH} (up to date)"
+      ;;
+    ahead)
+      n="$(git rev-list --count "${sha}..${HEAD_SHA}" 2>/dev/null || echo "?")"
+      echo "${remote}/${CURRENT_BRANCH} (${n} unpushed commit(s))"
+      ;;
+    behind)
+      n="$(git rev-list --count "${HEAD_SHA}..${sha}" 2>/dev/null || echo "?")"
+      echo "${remote}/${CURRENT_BRANCH} (${n} commit(s) behind remote)"
+      ;;
+    diverged)
+      echo "${remote}/${CURRENT_BRANCH} (diverged from local)"
+      ;;
+    *)
+      echo "${remote}/${CURRENT_BRANCH} (differs from local)"
+      ;;
+  esac
+}
+
+print_branch_push_status() {
+  local remote="" sha="" extra="false"
+  if [[ "${PUSH_STATUS}" == "detached" ]]; then
+    echo "Detached HEAD state - cannot check push status"
+    return 0
+  fi
+
+  case "${PUSH_STATUS}" in
+    up-to-date)
+      echo "✓ Branch '${CURRENT_BRANCH}' is pushed and up-to-date with ${PUSH_REMOTE}/${CURRENT_BRANCH}"
+      ;;
+    missing)
+      echo "✗ Branch '${CURRENT_BRANCH}' not found on any remote"
+      if [[ -n "${PUSH_HINT_REMOTE}" ]]; then
+        echo "Run: git push -u ${PUSH_HINT_REMOTE} ${CURRENT_BRANCH}"
+      else
+        echo "No git remotes configured."
+      fi
+      ;;
+    ahead)
+      echo "✗ Branch '${CURRENT_BRANCH}' exists on ${PUSH_REMOTE} but local is ahead"
+      echo "Unpushed commits: ${PUSH_AHEAD}"
+      echo "Run: git push ${PUSH_REMOTE} ${CURRENT_BRANCH}"
+      ;;
+    behind)
+      echo "✗ Branch '${CURRENT_BRANCH}' exists on ${PUSH_REMOTE} but local is behind"
+      echo "Remote is ${PUSH_BEHIND} commit(s) ahead of local"
+      echo "Run: git fetch ${PUSH_REMOTE} && git status"
+      ;;
+    diverged)
+      echo "✗ Branch '${CURRENT_BRANCH}' exists on ${PUSH_REMOTE} but local has diverged"
+      echo "Run: git fetch ${PUSH_REMOTE} && git status"
+      ;;
+    *)
+      echo "✗ Branch '${CURRENT_BRANCH}' exists on ${PUSH_REMOTE} but local differs from remote"
+      echo "Run: git fetch ${PUSH_REMOTE} && git status"
+      ;;
+  esac
+
+  if [[ -n "${PUSH_MATCHES}" ]]; then
+    while IFS=$'\t' read -r remote sha; do
+      [[ -n "${remote}" ]] || continue
+      [[ "${remote}" != "${PUSH_REMOTE}" ]] || continue
+      if [[ "${extra}" != "true" ]]; then
+        echo "Also found on:"
+        extra="true"
+      fi
+      echo "  $(describe_remote_branch_status "${remote}" "${sha}")"
+    done <<< "${PUSH_MATCHES}"
+  fi
+}
+
+# Detect PR target repo from the push remote (fork parent, else upstream, else same repo).
 detect_pr_target() {
-  local origin_url=""
-  origin_url="$(git remote get-url origin 2>/dev/null || true)"
-  
-  if [[ -z "${origin_url}" ]]; then
-    echo "origin" # fallback
-    return
+  local head_remote="" url="" repo_slug="" parent="" upstream_slug=""
+  local gh_ok="false"
+
+  head_remote="${PUSH_REMOTE:-${PUSH_HINT_REMOTE}}"
+  if [[ -n "${head_remote}" ]]; then
+    url="$(git remote get-url "${head_remote}" 2>/dev/null || true)"
   fi
-  
-  # Extract owner/repo from origin URL
-  local repo_slug=""
-  repo_slug="$(parse_repo_slug "${origin_url}")"
-  
-  # Count number of remotes
-  local remote_count=""
-  remote_count="$(git remote | wc -l | tr -d ' ')"
-  
-  # If only one remote, treat it as the main repo (no fork workflow)
-  if [[ "${remote_count}" -eq 1 ]]; then
-    echo "${repo_slug}" # Single remote = direct workflow, PR to same repo
-    return
+  if [[ -z "${url}" ]]; then
+    url="$(git remote get-url origin 2>/dev/null || true)"
   fi
-  
-  # Multiple remotes: check if origin is a fork using gh api
-  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    local fork_info=""
-    fork_info="$(gh api "repos/${repo_slug}" --jq '.fork, .parent.full_name' 2>/dev/null || true)"
-    
-    if echo "${fork_info}" | head -n1 | grep -q "true"; then
-      local parent_repo=""
-      parent_repo="$(echo "${fork_info}" | tail -n1)"
-      echo "${parent_repo}" # Return parent repo for PR target
-      return
+  if [[ -z "${url}" ]]; then
+    head_remote="$(first_remote || true)"
+    if [[ -n "${head_remote}" ]]; then
+      url="$(git remote get-url "${head_remote}" 2>/dev/null || true)"
     fi
   fi
-  
-  echo "${repo_slug}" # Not a fork, PR to same repo
+  if [[ -z "${url}" ]]; then
+    return 0
+  fi
+
+  repo_slug="$(parse_repo_slug "${url}")"
+  if [[ ! "${repo_slug}" =~ ^[^/]+/[^/]+$ ]]; then
+    echo "${repo_slug}"
+    return 0
+  fi
+
+  if [[ "${GH_AUTH_OK:-}" == "true" ]]; then
+    gh_ok="true"
+  elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    gh_ok="true"
+  fi
+
+  if [[ "${gh_ok}" == "true" ]]; then
+    parent="$(gh api "repos/${repo_slug}" --jq 'if .fork then .parent.full_name else empty end' 2>/dev/null || true)"
+    if [[ -n "${parent}" ]]; then
+      echo "${parent}"
+      return 0
+    fi
+  fi
+
+  if git remote get-url upstream >/dev/null 2>&1; then
+    upstream_slug="$(remote_repo_slug upstream || true)"
+    if [[ "${upstream_slug}" =~ ^[^/]+/[^/]+$ && "${upstream_slug}" != "${repo_slug}" ]]; then
+      echo "${upstream_slug}"
+      return 0
+    fi
+  fi
+
+  echo "${repo_slug}"
 }
 
 # Parse args
@@ -470,9 +764,21 @@ if [[ -n "${BASE_REMOTE}" && "${BASE_REMOTE}" != "${DEFAULT_REMOTE}" ]]; then
   try_fetch "${BASE_REMOTE}"
 fi
 
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD')"
+BRANCH_PUSH_OK="false"
+PUSH_REMOTE=""
+PUSH_HINT_REMOTE=""
+PUSH_MATCHES=""
+PUSH_STATUS="missing"
+resolve_branch_push "${CURRENT_BRANCH}" "${HEAD_SHA}"
+
+if [[ -n "${PUSH_REMOTE}" && "${PUSH_REMOTE}" != "${DEFAULT_REMOTE}" && "${PUSH_REMOTE}" != "${INTEGRATION_REMOTE}" && "${PUSH_REMOTE}" != "${BASE_REMOTE}" ]]; then
+  try_fetch "${PUSH_REMOTE}"
+fi
+
 section "Context"
 printf "Repository: %s\n" "${TOPLEVEL}"
-printf "HEAD:       %s (%s)\n" "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD')" "${HEAD_SHA}"
+printf "HEAD:       %s (%s)\n" "${CURRENT_BRANCH}" "${HEAD_SHA}"
 printf "Base:       %s (%s)\n" "${BASE}" "${BASE_SHA}"
 
 MB="$(git merge-base HEAD "${BASE}" 2>/dev/null || true)"
@@ -497,9 +803,7 @@ fi
 # Collect PR readiness status for summary
 GH_AUTH_OK="false"
 GH_AUTH_ERROR=""
-BRANCH_PUSH_OK="false"
 MERGE_OK="false"
-CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD')"
 
 if command -v gh >/dev/null 2>&1; then
   GH_AUTH_OUTPUT="$(gh auth status 2>&1)"
@@ -513,16 +817,6 @@ if command -v gh >/dev/null 2>&1; then
       GH_AUTH_ERROR="auth"
     else
       GH_AUTH_ERROR="unknown"
-    fi
-  fi
-fi
-
-if [[ "${CURRENT_BRANCH}" != "HEAD" ]]; then
-  if git ls-remote --heads origin "${CURRENT_BRANCH}" 2>/dev/null | grep -q "${CURRENT_BRANCH}"; then
-    local_sha="$(git rev-parse HEAD)"
-    remote_sha="$(git rev-parse "origin/${CURRENT_BRANCH}" 2>/dev/null || echo "")"
-    if [[ "${local_sha}" == "${remote_sha}" ]]; then
-      BRANCH_PUSH_OK="true"
     fi
   fi
 fi
@@ -552,17 +846,29 @@ else
   echo "✗ GitHub CLI check failed (run: gh auth status for details)"
 fi
 
-if [[ "${BRANCH_PUSH_OK}" == "true" ]]; then
-  echo "✓ Branch '${CURRENT_BRANCH}' is pushed and up-to-date"
-elif [[ "${CURRENT_BRANCH}" == "HEAD" ]]; then
-  echo "✗ Detached HEAD state"
-else
-  if git ls-remote --heads origin "${CURRENT_BRANCH}" 2>/dev/null | grep -q "${CURRENT_BRANCH}"; then
-    echo "✗ Branch '${CURRENT_BRANCH}' has unpushed commits"
-  else
-    echo "✗ Branch '${CURRENT_BRANCH}' not pushed to origin"
-  fi
-fi
+case "${PUSH_STATUS}" in
+  up-to-date)
+    echo "✓ Branch '${CURRENT_BRANCH}' is pushed and up-to-date with ${PUSH_REMOTE}"
+    ;;
+  detached)
+    echo "✗ Detached HEAD state"
+    ;;
+  missing)
+    echo "✗ Branch '${CURRENT_BRANCH}' not pushed to any remote"
+    ;;
+  ahead)
+    echo "✗ Branch '${CURRENT_BRANCH}' has unpushed commits (${PUSH_REMOTE})"
+    ;;
+  behind)
+    echo "✗ Branch '${CURRENT_BRANCH}' is behind ${PUSH_REMOTE}/${CURRENT_BRANCH}"
+    ;;
+  diverged)
+    echo "✗ Branch '${CURRENT_BRANCH}' has diverged from ${PUSH_REMOTE}/${CURRENT_BRANCH}"
+    ;;
+  *)
+    echo "✗ Branch '${CURRENT_BRANCH}' differs from ${PUSH_REMOTE}/${CURRENT_BRANCH}"
+    ;;
+esac
 
 if [[ "${MERGE_OK}" == "true" ]]; then
   echo "✓ No merge conflicts detected"
@@ -577,28 +883,7 @@ else
 fi
 
 section "Branch push status"
-
-if [[ "${CURRENT_BRANCH}" == "HEAD" ]]; then
-  echo "Detached HEAD state - cannot check push status"
-else
-  # Check if branch exists on origin
-  if git ls-remote --heads origin "${CURRENT_BRANCH}" | grep -q "${CURRENT_BRANCH}"; then
-    local_sha="$(git rev-parse HEAD)"
-    remote_sha="$(git rev-parse "origin/${CURRENT_BRANCH}" 2>/dev/null || echo "")"
-    
-    if [[ "${local_sha}" == "${remote_sha}" ]]; then
-      echo "✓ Branch '${CURRENT_BRANCH}' is pushed and up-to-date with origin/${CURRENT_BRANCH}"
-    else
-      echo "✗ Branch '${CURRENT_BRANCH}' exists on origin but local differs from remote"
-      unpushed="$(git rev-list --count "origin/${CURRENT_BRANCH}..HEAD" 2>/dev/null || echo "?")"
-      echo "Unpushed commits: ${unpushed}"
-      echo "Run: git push origin ${CURRENT_BRANCH}"
-    fi
-  else
-    echo "✗ Branch '${CURRENT_BRANCH}' not found on origin"
-    echo "Run: git push -u origin ${CURRENT_BRANCH}"
-  fi
-fi
+print_branch_push_status
 
 section "Commits (${BASE}..HEAD)"
 if ! git merge-base --is-ancestor "${BASE}" HEAD 2>/dev/null; then
@@ -638,20 +923,21 @@ fi
 
 section "Pull request target"
 if [[ "${PR_TARGET_REPO}" =~ / ]]; then
-  # Contains slash, likely owner/repo format
   echo "Target repository: ${PR_TARGET_REPO}"
-  
-  # Check if this looks like a fork workflow
-  origin_slug="$(parse_repo_slug "$(git remote get-url origin 2>/dev/null || echo "")")"
-  if [[ "${PR_TARGET_REPO}" != "${origin_slug}" ]]; then
+  push_head_remote="${PUSH_REMOTE:-${PUSH_HINT_REMOTE}}"
+  push_slug=""
+  if [[ -n "${push_head_remote}" ]]; then
+    push_slug="$(remote_repo_slug "${push_head_remote}" || true)"
+  fi
+  if [[ -n "${push_slug}" && "${PR_TARGET_REPO}" != "${push_slug}" ]]; then
     echo "Fork workflow detected:"
-    echo "  Push to: ${origin_slug}:${CURRENT_BRANCH}"
+    echo "  Push to: ${push_slug}:${CURRENT_BRANCH}"
     echo "  PR to: ${PR_TARGET_REPO}"
   else
     echo "Direct workflow: PR within ${PR_TARGET_REPO}"
   fi
 else
-  echo "Could not determine PR target (gh cli may not be authenticated)"
+  echo "Could not determine PR target (gh cli may not be authenticated, or no GitHub remote)"
 fi
 
 section "PR template"

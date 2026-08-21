@@ -32,7 +32,7 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/
 - `${HOME}/.cursor/agents/ai-toolkit`
 - `${HOME}/.cursor/ai-toolkit` — scripts, canonical `rules-source/`, and `projects.registry` (e.g. `install-rules.sh`). Add that directory to `PATH` if you want to run scripts by name; see the post-install hint from `install.sh`.
 
-Some scripts require the [GitHub CLI](https://cli.github.com/) (`gh`) with `gh auth login` completed — notably `pr_sum.sh` and `release_sum.sh`. `install.sh` checks for `gh` after install and prints setup instructions if it is missing or not authenticated.
+Other bundled scripts include `review_sum.sh` (PR-ready context; no `gh` required). Some scripts require the [GitHub CLI](https://cli.github.com/) (`gh`) with `gh auth login` completed — notably `pr_sum.sh` and `release_sum.sh`. `install.sh` checks for `gh` after install and prints setup instructions if it is missing or not authenticated.
 
 `install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode. Pass `--no-sync-rules` to skip refreshing registered project rules.
 
@@ -120,6 +120,7 @@ Otherwise: one row per changed file; collapse paths that share the same rule set
 - **Project rules:** Run `install-rules.sh` or the `install_rules` command to install filtered rules into `<project>/.cursor/rules/ai-toolkit/`. Projects are registered automatically for sync on the next `install.sh` run. Use `--no-register` to opt out.
 - **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke `@red-green-bug-fix` (not auto-attached).
+- **PR ready:** `commands/pr_ready.md` + `skills/pr-ready/` — check changes against `CONTRIBUTING.md`, `AGENTS.md`, and project rules before opening a PR; invoke `/ai-toolkit/pr_ready` or `@pr-ready`. For best results, install project rules with `install_rules` first.
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
 - **Precedence:** If you use Team Rules, remember order is **Team → Project → User** when guidance conflicts. See [Team Rules](https://cursor.com/docs/rules#team-rules).
 

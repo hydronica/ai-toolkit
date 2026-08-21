@@ -14,10 +14,19 @@ For **bug fixes and regressions**, invoke `@red-green-bug-fix` (replication cont
 - Run focused package tests: `go test -run '1234' -v ./path/to/package`.
 - Prefer one case per regression unless several share setup; use direct `t.Run` when a single scenario suffices.
 - If automation is blocked, `t.Skip` with issue ID, contract summary, and why (manual steps still required in PR).
+- For multi-case regression groups, add a brief comment above the cases stating trigger, expected behavior, and out-of-scope items (or link to issue/README).
+
+## Test file layout
+
+Pair `_test.go` files with the source they exercise: `decode.go` → `decode_test.go`, `flag.go` → `flag_test.go`.
+
+Split only when the source is a distinct subsystem (e.g. `dotenv.go` → `dotenv_test.go`). Do **not** add feature-specific test files (`nested_test.go`, `prefix_test.go`) when cases belong in an existing `Test…` for that API.
 
 ## Test naming
 
-One test per exported symbol: `TestParseInt`, `TestUserService_Create`. Put scenarios in table/trial or `t.Run` case names (e.g. `"rejects empty input"`).
+One test per exported symbol: `TestParseInt`, `TestUserService_Create`, `TestDecoder_Unmarshal`. Put scenarios in table/trial or `t.Run` case names (e.g. `"rejects empty input"`, `"nested: prefixed struct tag"`).
+
+Do **not** fork parallel test functions for the same API (`TestDecoder_Unmarshal_nested`). Add new `trial`/`t.Run` cases to the existing `Test…` and reuse its harness (`fn`, `input`, setup/teardown).
 
 Behavioral names (`TestReturns422ForDuplicateEmail`) are **exceptions** for integration or cross-cutting cases only — ask if unsure. Not RSpec/Jest-style names for unit tests.
 
@@ -44,6 +53,27 @@ func TestParseInt(t *testing.T) {
 ### Table vs inline — one style per test
 
 Per `Test…` function: **all table/trial or all inline — never both**. Multiple cases → full table (no extra assertions after `SubTest`). Single case → direct test. Stateful/order-dependent → isolated subtests, not a shared table.
+
+### Test config types — placement hierarchy
+
+Prefer keeping struct shapes **next to the case** that uses them. Use this order:
+
+1. **Inline anonymous struct** in the `trial` case (`Input` / `Expected` adjacent in the table).
+2. **Named type inside the `Test…` function** when several cases in that test share a shape (e.g. `type dbCreds struct` beside `type input struct` in `TestDecoder_Unmarshal`).
+3. **Package-level type in `*_test.go`** only when required (see below).
+
+Extract a named type when:
+
+- It is used in **3+ cases within the same `Test…` function**, or
+- It must **implement an interface** (e.g. `encoding.TextMarshaler`) or support **anonymous embed** syntax that inline structs cannot express in composite literals.
+
+Do **not** introduce a new test type that duplicates an existing one in the same file (e.g. `nMarshalerStruct` when `mStruct` already exists).
+
+For `trial` cases with `Expected: interface{}`, inline **different** anonymous structs in `Input` and `Expected` is fine when field shapes match — comparison uses value equality, not type identity.
+
+### No shared fixture packages
+
+Do **not** create importable packages (e.g. `internal/.../testfixtures`, `nestfixtures`) solely to share struct types across tests. Duplicate small types per `_test.go` or inline in cases. Cross-package duplication is acceptable.
 
 ## Failure style
 
