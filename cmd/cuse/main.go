@@ -49,7 +49,7 @@ func run() error {
 	if cookie != "" {
 		result, err := fetchUsage(ctx, cookie, *debug)
 		if err == nil {
-			printTable(result)
+			fmt.Print(result.Format(time.Now()))
 			return nil
 		}
 		if !errors.Is(err, ErrAuthFailed) {
@@ -78,7 +78,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("fetching usage after login: %w", err)
 	}
-	printTable(result)
+	fmt.Print(result.Format(time.Now()))
 	return nil
 }
 
@@ -94,91 +94,107 @@ func resolveEnvPath() string {
 
 const periodDisplayLayout = "2006-01-02T15:04 MST"
 
-// printTable prints the billing usage report to stdout.
-func printTable(r *UsageResult) {
-	fmt.Println("Cursor usage")
-	fmt.Println("-------------")
-	fmt.Printf("Billing period:  %s → %s\n", formatPeriod(r.PeriodStart), formatPeriod(r.PeriodEnd))
-	remaining, elapsedPct, hasPeriod := periodStats(r.PeriodStart, r.PeriodEnd)
+// Format returns the billing usage report as a string.
+func (r *UsageResult) Format(now time.Time) string {
+	var b strings.Builder
+	remaining, elapsedPct, hasPeriod := r.periodStats(now)
+	r.writeHeader(&b, hasPeriod, remaining, elapsedPct)
+	r.writeUsageSection(&b, hasPeriod)
+	b.WriteString("\n")
+	r.writeSpendSection(&b)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (r *UsageResult) writeHeader(b *strings.Builder, hasPeriod bool, remaining time.Duration, elapsedPct float64) {
+	fmt.Fprintln(b, "Cursor usage")
+	fmt.Fprintln(b, "-------------")
+	fmt.Fprintf(b, "Billing period:  %s → %s\n", formatPeriod(r.PeriodStart), formatPeriod(r.PeriodEnd))
 	if hasPeriod {
-		fmt.Printf("Time remaining:  %s (%.1f%% elapsed)\n", formatTimeRemaining(remaining), elapsedPct)
+		fmt.Fprintf(b, "Time remaining:  %s (%.1f%% elapsed)\n", formatTimeRemaining(remaining), elapsedPct)
 	}
 	if r.MembershipType != "" {
 		planLine := r.MembershipType
 		if r.LimitType == "team" {
 			planLine += " (team limit)"
 		}
-		fmt.Printf("Plan:            %s\n", planLine)
+		fmt.Fprintf(b, "Plan:            %s\n", planLine)
 	}
-
-	if r.LimitType == "team" && r.RequestsLimit > 0 {
-		printTeamLimitUsage(r, hasPeriod)
-	} else {
-		printPlanUsage(r, hasPeriod)
-	}
-
-	fmt.Println()
-	if r.LimitType == "team" {
-		if r.Team != nil && r.Team.Enabled {
-			printTeamUsage(r.Team, true)
-		}
-	} else {
-		if !r.OnDemandEnabled {
-			fmt.Println("On-demand:       Disabled")
-		} else {
-			fmt.Printf("On-demand:       %s spent\n", formatDollars(r.OnDemandUsed))
-		}
-		if r.Team != nil {
-			fmt.Println()
-			printTeamUsage(r.Team, false)
-		}
-	}
-	fmt.Println()
 }
 
-func printPlanUsage(r *UsageResult, hasPeriod bool) {
+func (r *UsageResult) writeUsageSection(b *strings.Builder, hasPeriod bool) {
+	teamLimit := r.LimitType == "team" && r.RequestsLimit > 0
+	showPlanLines := r.LimitType != "team"
+	showRequestLines := r.RequestsLimit > 0 || r.RequestsRemaining != nil
+	if !showPlanLines && !showRequestLines {
+		return
+	}
+
 	line := "Total usage:"
-	if hasPeriod {
-		line += "     (Tip: keep usage below elapsed %)"
+	if teamLimit {
+		line = "Included usage:"
 	}
-	fmt.Println(line)
-	fmt.Printf("  API (named):   %.1f%%\n", r.APIPercent)
-	fmt.Printf("  Auto:          %.1f%%\n", r.AutoPercent)
+	if hasPeriod {
+		if teamLimit {
+			line += "  (Tip: keep usage below elapsed %)"
+		} else {
+			line += "     (Tip: keep usage below elapsed %)"
+		}
+	}
+	fmt.Fprintln(b, line)
+
+	if showPlanLines {
+		fmt.Fprintf(b, "  API (named):   %.1f%%\n", r.APIPercent)
+		fmt.Fprintf(b, "  Auto:          %.1f%%\n", r.AutoPercent)
+	}
 	if r.RequestsLimit > 0 {
-		used := requestUsed(r)
+		used := r.requestUsed()
 		pct := requestPercent(used, r.RequestsLimit)
-		fmt.Printf("  Requests:      %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
+		if teamLimit {
+			fmt.Fprintf(b, "  Usage:         %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
+		} else {
+			fmt.Fprintf(b, "  Requests:      %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
+		}
+	}
+	if r.RequestsRemaining != nil && !teamLimit {
+		fmt.Fprintf(b, "  Remaining:     %.0f\n", *r.RequestsRemaining)
 	}
 }
 
-func printTeamLimitUsage(r *UsageResult, hasPeriod bool) {
-	line := "Included usage:"
-	if hasPeriod {
-		line += "  (Tip: keep usage below elapsed %)"
+func (r *UsageResult) writeSpendSection(b *strings.Builder) {
+	if r.LimitType != "team" {
+		r.writeIndividualOnDemand(b)
 	}
-	fmt.Println(line)
-	used := requestUsed(r)
-	pct := requestPercent(used, r.RequestsLimit)
-	fmt.Printf("  Usage:         %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
-	if r.RequestsRemaining != nil {
-		fmt.Printf("  Remaining:     %.0f\n", *r.RequestsRemaining)
+	if r.Team != nil && r.Team.Enabled {
+		if r.LimitType != "team" {
+			b.WriteString("\n")
+		}
+		heading := "Team on-demand:"
+		if r.LimitType != "team" {
+			heading = "Team usage:"
+		}
+		r.Team.writeSpend(b, heading)
 	}
 }
 
-func printTeamUsage(t *TeamUsageInfo, teamLimit bool) {
+func (r *UsageResult) writeIndividualOnDemand(b *strings.Builder) {
+	if !r.OnDemandEnabled {
+		fmt.Fprintln(b, "On-demand:       Disabled")
+		return
+	}
+	fmt.Fprintf(b, "On-demand:       %s spent\n", formatDollars(r.OnDemandUsed))
+}
+
+func (t *TeamUsageInfo) writeSpend(b *strings.Builder, heading string) {
 	if !t.Enabled {
 		return
 	}
-	if teamLimit {
-		fmt.Printf("Team on-demand:  %s spent\n", formatDollars(t.Used))
-	} else {
-		fmt.Printf("Team usage:      %s spent\n", formatDollars(t.Used))
-	}
+	fmt.Fprintf(b, "%-17s%s spent\n", heading, formatDollars(t.Used))
 	if t.Limit != nil {
-		fmt.Printf("  Limit:         %s\n", formatDollars(*t.Limit))
+		fmt.Fprintf(b, "  Limit:         %s\n", formatDollars(*t.Limit))
 	}
 	if t.Remaining != nil {
-		fmt.Printf("  Remaining:     %s\n", formatDollars(*t.Remaining))
+		fmt.Fprintf(b, "  Remaining:     %s\n", formatDollars(*t.Remaining))
 	}
 }
 
@@ -190,16 +206,16 @@ func formatPeriod(t time.Time) string {
 }
 
 // periodStats returns time until the billing period ends and the elapsed percentage.
-func periodStats(start, end time.Time) (remaining time.Duration, elapsedPct float64, ok bool) {
-	if start.IsZero() || end.IsZero() {
+func (r *UsageResult) periodStats(now time.Time) (remaining time.Duration, elapsedPct float64, ok bool) {
+	if r.PeriodStart.IsZero() || r.PeriodEnd.IsZero() {
 		return 0, 0, false
 	}
-	total := end.Sub(start)
+	total := r.PeriodEnd.Sub(r.PeriodStart)
 	if total <= 0 {
 		return 0, 0, false
 	}
-	remaining = time.Until(end)
-	elapsed := time.Since(start)
+	remaining = r.PeriodEnd.Sub(now)
+	elapsed := now.Sub(r.PeriodStart)
 	elapsedPct = math.Min(100, math.Max(0, (elapsed.Seconds()/total.Seconds())*100))
 	return remaining, elapsedPct, true
 }
@@ -261,7 +277,7 @@ func formatTimeRemaining(remaining time.Duration) string {
 }
 
 // requestUsed returns breakdown.total when present, otherwise plan.used.
-func requestUsed(r *UsageResult) float64 {
+func (r *UsageResult) requestUsed() float64 {
 	if r.RequestsBreakdownTotal != nil {
 		return *r.RequestsBreakdownTotal
 	}

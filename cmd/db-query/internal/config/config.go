@@ -28,9 +28,9 @@ type Config struct {
 func DefaultPath() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "config.toml"
+		return ".conf.toml"
 	}
-	path := filepath.Join(filepath.Dir(exe), "config.toml")
+	path := filepath.Join(filepath.Dir(exe), ".conf.toml")
 	return path
 }
 
