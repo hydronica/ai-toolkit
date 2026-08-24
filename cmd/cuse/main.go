@@ -130,11 +130,7 @@ func (r *UsageResult) writeUsageSection(b *strings.Builder) {
 		return
 	}
 
-	if teamLimit {
-		fmt.Fprintln(b, "Included usage:")
-	} else {
-		fmt.Fprintln(b, "Total usage:")
-	}
+	fmt.Fprintln(b, "Total usage:")
 
 	if showPlanLines {
 		fmt.Fprintf(b, "  API (named):   %.1f%%\n", r.APIPercent)
