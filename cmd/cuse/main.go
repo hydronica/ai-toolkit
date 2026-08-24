@@ -99,7 +99,7 @@ func (r *UsageResult) Format(now time.Time) string {
 	var b strings.Builder
 	remaining, elapsedPct, hasPeriod := r.periodStats(now)
 	r.writeHeader(&b, hasPeriod, remaining, elapsedPct)
-	r.writeUsageSection(&b, hasPeriod)
+	r.writeUsageSection(&b)
 	b.WriteString("\n")
 	r.writeSpendSection(&b)
 	b.WriteString("\n")
@@ -122,7 +122,7 @@ func (r *UsageResult) writeHeader(b *strings.Builder, hasPeriod bool, remaining 
 	}
 }
 
-func (r *UsageResult) writeUsageSection(b *strings.Builder, hasPeriod bool) {
+func (r *UsageResult) writeUsageSection(b *strings.Builder) {
 	teamLimit := r.LimitType == "team" && r.RequestsLimit > 0
 	showPlanLines := r.LimitType != "team"
 	showRequestLines := r.RequestsLimit > 0 || r.RequestsRemaining != nil
@@ -130,18 +130,11 @@ func (r *UsageResult) writeUsageSection(b *strings.Builder, hasPeriod bool) {
 		return
 	}
 
-	line := "Total usage:"
 	if teamLimit {
-		line = "Included usage:"
+		fmt.Fprintln(b, "Included usage:")
+	} else {
+		fmt.Fprintln(b, "Total usage:")
 	}
-	if hasPeriod {
-		if teamLimit {
-			line += "  (Tip: keep usage below elapsed %)"
-		} else {
-			line += "     (Tip: keep usage below elapsed %)"
-		}
-	}
-	fmt.Fprintln(b, line)
 
 	if showPlanLines {
 		fmt.Fprintf(b, "  API (named):   %.1f%%\n", r.APIPercent)
@@ -151,7 +144,8 @@ func (r *UsageResult) writeUsageSection(b *strings.Builder, hasPeriod bool) {
 		used := r.requestUsed()
 		pct := requestPercent(used, r.RequestsLimit)
 		if teamLimit {
-			fmt.Fprintf(b, "  Usage:         %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
+			fmt.Fprintf(b, "  Spent:         %s of %s (%.1f%%)\n",
+				formatDollars(used), formatDollars(r.RequestsLimit), pct)
 		} else {
 			fmt.Fprintf(b, "  Requests:      %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
 		}

@@ -374,8 +374,8 @@ On-demand:       Disabled
 Billing period:  2026-08-01T00:00 UTC → 2026-09-01T00:00 UTC
 Time remaining:  16 days (48.4% elapsed)
 Plan:            enterprise (team limit)
-Included usage:  (Tip: keep usage below elapsed %)
-  Usage:         0.5% (233/50000)
+Included usage:
+  Spent:         $2.33 of $500.00 (0.5%)
 
 Team on-demand:  $12.34 spent
   Limit:         $123.45
