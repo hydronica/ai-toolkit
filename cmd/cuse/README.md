@@ -39,7 +39,7 @@ Example output:
 Cursor usage
 -------------
 Billing period:  2026-05-01 → 2026-06-01
-Total usage:     (Tip: keep usage below elapsed %)
+Total usage:
   API (named):   42.3%
   Auto:          15.7%
   Requests:      56.2% (1124/2000)

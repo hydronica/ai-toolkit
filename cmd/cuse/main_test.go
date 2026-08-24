@@ -1,16 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"math"
-	"os"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hydronica/trial"
 )
+
+// testNow is a fixed clock for deterministic period/elapsed output in tests.
+var testNow = time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
 
 func TestFormatTimeRemaining(t *testing.T) {
 	fn := func(remaining time.Duration) (string, error) {
@@ -50,7 +51,7 @@ func TestFormatDollars(t *testing.T) {
 
 func TestRequestUsed(t *testing.T) {
 	fn := func(r *UsageResult) (float64, error) {
-		return requestUsed(r), nil
+		return r.requestUsed(), nil
 	}
 	cases := trial.Cases[*UsageResult, float64]{
 		"fallback to plan used": {
@@ -100,6 +101,10 @@ type parseUsageOutput struct {
 }
 
 func TestParseUsageAndOutput(t *testing.T) {
+	if loc, err := time.LoadLocation("UTC"); err == nil {
+		time.Local = loc
+	}
+
 	fn := func(body string) (parseUsageOutput, error) {
 		got, err := parseUsage([]byte(body))
 		if err != nil {
@@ -107,7 +112,7 @@ func TestParseUsageAndOutput(t *testing.T) {
 		}
 		return parseUsageOutput{
 			result: got,
-			output: capturePrintTable(got),
+			output: got.Format(testNow),
 		}, nil
 	}
 	cases := trial.Cases[string, parseUsageOutput]{
@@ -321,28 +326,132 @@ On-demand:       Disabled
 `,
 			},
 		},
+		"enterprise_team_limit": {
+			Input: `{
+  "billingCycleStart": "2026-08-01T00:00:00.000Z",
+  "billingCycleEnd": "2026-09-01T00:00:00.000Z",
+  "membershipType": "enterprise",
+  "limitType": "team",
+  "isUnlimited": false,
+  "autoModelSelectedDisplayMessage": "Youve used 0% of your included total usage,namedModelSelectedDisplayMessage:Youve used 0% of your included API usage",
+  "individualUsage": {
+    "overall": {
+      "enabled": true,
+      "used": 233,
+      "limit": 50000,
+      "remaining": 49767
+    }
+  },
+  "teamUsage": {
+    "onDemand": {
+      "enabled": true,
+      "used": 1234,
+      "limit": 12345,
+      "remaining": 11111
+    }
+  }
+}`,
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					PeriodStart:       time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+					PeriodEnd:         time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+					MembershipType:    "enterprise",
+					LimitType:         "team",
+					AutoPercent:       0,
+					APIPercent:        0,
+					RequestsUsed:      233,
+					RequestsLimit:     50000,
+					RequestsRemaining: floatPtr(49767),
+					Team: &TeamUsageInfo{
+						Enabled:   true,
+						Used:      1234,
+						Limit:     floatPtr(12345),
+						Remaining: floatPtr(11111),
+					},
+				},
+				output: `Cursor usage
+-------------
+Billing period:  2026-08-01T00:00 UTC → 2026-09-01T00:00 UTC
+Time remaining:  16 days (48.4% elapsed)
+Plan:            enterprise (team limit)
+Total usage:
+  Spent:         $2.33 of $500.00 (0.5%)
+
+Team on-demand:  $12.34 spent
+  Limit:         $123.45
+  Remaining:     $111.11
+
+`,
+			},
+		},
 	}
-	trial.New(fn, cases).SubTest(t)
+	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
+		got := actual.(parseUsageOutput)
+		want := expected.(parseUsageOutput)
+		if diff := cmp.Diff(want.result, got.result); diff != "" {
+			return false, "result:" + diff
+		}
+		if got.output != want.output {
+			return false, fmt.Sprintf("output:\n%s", cmp.Diff(want.output, got.output))
+		}
+		return true, ""
+	}).SubTest(t)
+}
+
+type periodStatsInput struct {
+	start time.Time
+	end   time.Time
+	now   time.Time
+}
+
+type periodStatsOutput struct {
+	remaining  time.Duration
+	elapsedPct float64
+	ok         bool
+}
+
+func TestPeriodStats(t *testing.T) {
+	fn := func(in periodStatsInput) (periodStatsOutput, error) {
+		r := &UsageResult{PeriodStart: in.start, PeriodEnd: in.end}
+		remaining, elapsedPct, ok := r.periodStats(in.now)
+		return periodStatsOutput{remaining, elapsedPct, ok}, nil
+	}
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	cases := trial.Cases[periodStatsInput, periodStatsOutput]{
+		"zero period start": {
+			Input:    periodStatsInput{now: testNow},
+			Expected: periodStatsOutput{},
+		},
+		"mid period": {
+			Input:    periodStatsInput{start: start, end: end, now: testNow},
+			Expected: periodStatsOutput{remaining: 16 * 24 * time.Hour, elapsedPct: 48.4, ok: true},
+		},
+		"past end": {
+			Input:    periodStatsInput{start: start, end: end, now: end.Add(time.Hour)},
+			Expected: periodStatsOutput{remaining: -time.Hour, elapsedPct: 100, ok: true},
+		},
+		"before start": {
+			Input:    periodStatsInput{start: start, end: end, now: start.Add(-time.Hour)},
+			Expected: periodStatsOutput{remaining: 31*24*time.Hour + time.Hour, elapsedPct: 0, ok: true},
+		},
+	}
+	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
+		got := actual.(periodStatsOutput)
+		want := expected.(periodStatsOutput)
+		if got.ok != want.ok {
+			return false, fmt.Sprintf("ok: got %v want %v", got.ok, want.ok)
+		}
+		if got.remaining != want.remaining {
+			return false, fmt.Sprintf("remaining: got %v want %v", got.remaining, want.remaining)
+		}
+		if math.Abs(got.elapsedPct-want.elapsedPct) > 0.05 {
+			return false, fmt.Sprintf("elapsedPct: got %v want %v", got.elapsedPct, want.elapsedPct)
+		}
+		return true, ""
+	}).SubTest(t)
 }
 
 func floatPtr(v float64) *float64 {
 	return &v
-}
-
-func capturePrintTable(r *UsageResult) string {
-	oldStdout := os.Stdout
-	readPipe, writePipe, err := os.Pipe()
-	if err != nil {
-		panic(err)
-	}
-	os.Stdout = writePipe
-
-	printTable(r)
-
-	writePipe.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, readPipe)
-	return buf.String()
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,18 +23,20 @@ const (
 
 // UsageResult holds the billing data we show to the user.
 type UsageResult struct {
-	PeriodStart      time.Time
-	PeriodEnd        time.Time
-	MembershipType   string
-	TotalPercent     float64
-	AutoPercent      float64
-	APIPercent       float64
-	RequestsUsed             float64
-	RequestsLimit            float64
-	RequestsBreakdownTotal   *float64 // when set, used for request % instead of RequestsUsed
-	OnDemandEnabled  bool
-	OnDemandUsed     float64 // cents
-	Team             *TeamUsageInfo
+	PeriodStart            time.Time
+	PeriodEnd              time.Time
+	MembershipType         string
+	LimitType              string // "team" for team-limit enterprise accounts
+	TotalPercent           float64
+	AutoPercent            float64
+	APIPercent             float64
+	RequestsUsed           float64
+	RequestsLimit          float64
+	RequestsRemaining      *float64
+	RequestsBreakdownTotal *float64 // when set, used for request % instead of RequestsUsed
+	OnDemandEnabled        bool
+	OnDemandUsed           float64 // cents
+	Team                   *TeamUsageInfo
 }
 
 // TeamUsageInfo holds team-level on-demand spend from usage-summary.
@@ -46,9 +49,12 @@ type TeamUsageInfo struct {
 
 // usageSummaryResponse maps the fields we care about from /api/usage-summary.
 type usageSummaryResponse struct {
-	BillingCycleStart string `json:"billingCycleStart"`
-	BillingCycleEnd   string `json:"billingCycleEnd"`
-	MembershipType    string `json:"membershipType"`
+	BillingCycleStart                string `json:"billingCycleStart"`
+	BillingCycleEnd                  string `json:"billingCycleEnd"`
+	MembershipType                   string `json:"membershipType"`
+	LimitType                        string `json:"limitType"`
+	AutoModelSelectedDisplayMessage  string `json:"autoModelSelectedDisplayMessage"`
+	NamedModelSelectedDisplayMessage string `json:"namedModelSelectedDisplayMessage"`
 	// Error field present when the API rejects the cookie.
 	Error           string          `json:"error"`
 	Description     string          `json:"description"`
@@ -79,8 +85,9 @@ type onDemandUsage struct {
 }
 
 type individualUsage struct {
-	Plan     planUsage     `json:"plan"`
-	OnDemand onDemandUsage `json:"onDemand"`
+	Plan     planUsage      `json:"plan"`
+	Overall  teamUsageBlock `json:"overall"`
+	OnDemand onDemandUsage  `json:"onDemand"`
 }
 
 // teamUsageBlock matches teamUsage when fields are at the top level.
@@ -177,28 +184,101 @@ func parseUsage(usageBody []byte) (*UsageResult, error) {
 	result.PeriodStart = parseAPITime(summary.BillingCycleStart)
 	result.PeriodEnd = parseAPITime(summary.BillingCycleEnd)
 	result.MembershipType = summary.MembershipType
+	result.LimitType = summary.LimitType
 	if tu, ok := parseTeamUsage(summary.TeamUsage); ok {
 		result.Team = &tu
 	}
 
-	if len(summary.IndividualUsage) > 0 {
-		var iu individualUsage
-		if err := json.Unmarshal(summary.IndividualUsage, &iu); err == nil {
-			result.TotalPercent = iu.Plan.TotalPercentUsed
-			result.AutoPercent = iu.Plan.AutoPercentUsed
-			result.APIPercent = iu.Plan.APIPercentUsed
-			result.RequestsUsed = iu.Plan.Used
-			result.RequestsLimit = iu.Plan.Limit
-			if iu.Plan.Breakdown != nil {
-				total := iu.Plan.Breakdown.Total
-				result.RequestsBreakdownTotal = &total
-			}
-			result.OnDemandEnabled = iu.OnDemand.Enabled
-			result.OnDemandUsed = iu.OnDemand.Used
-		}
-	}
+	autoMsg, namedMsg := displayMessages(summary)
+	parseIndividualUsage(result, summary.IndividualUsage, autoMsg, namedMsg)
 
 	return result, nil
+}
+
+func displayMessages(summary usageSummaryResponse) (autoMsg, namedMsg string) {
+	autoMsg = summary.AutoModelSelectedDisplayMessage
+	namedMsg = summary.NamedModelSelectedDisplayMessage
+	if namedMsg != "" {
+		return autoMsg, namedMsg
+	}
+	const marker = "namedModelSelectedDisplayMessage:"
+	if idx := strings.Index(autoMsg, marker); idx >= 0 {
+		return strings.TrimSpace(autoMsg[:idx]), strings.TrimSpace(autoMsg[idx+len(marker):])
+	}
+	return autoMsg, namedMsg
+}
+
+func parseIndividualUsage(result *UsageResult, raw json.RawMessage, autoMsg, namedMsg string) {
+	if len(raw) == 0 || string(raw) == "false" {
+		return
+	}
+
+	var iu individualUsage
+	if err := json.Unmarshal(raw, &iu); err != nil {
+		return
+	}
+
+	if hasPlanUsage(iu.Plan) {
+		applyPlanUsage(result, iu)
+		return
+	}
+
+	if info, ok := teamUsageFromBlock(iu.Overall); ok {
+		applyOverallUsage(result, info)
+		if pct, ok := parseDisplayPercent(autoMsg); ok {
+			result.AutoPercent = pct
+		}
+		if pct, ok := parseDisplayPercent(namedMsg); ok {
+			result.APIPercent = pct
+		}
+		return
+	}
+
+	applyPlanUsage(result, iu)
+}
+
+func hasPlanUsage(p planUsage) bool {
+	return p.Limit > 0 || p.Used > 0 || p.TotalPercentUsed > 0 ||
+		p.AutoPercentUsed > 0 || p.APIPercentUsed > 0 || p.Breakdown != nil
+}
+
+func applyPlanUsage(result *UsageResult, iu individualUsage) {
+	result.TotalPercent = iu.Plan.TotalPercentUsed
+	result.AutoPercent = iu.Plan.AutoPercentUsed
+	result.APIPercent = iu.Plan.APIPercentUsed
+	result.RequestsUsed = iu.Plan.Used
+	result.RequestsLimit = iu.Plan.Limit
+	if iu.Plan.Breakdown != nil {
+		total := iu.Plan.Breakdown.Total
+		result.RequestsBreakdownTotal = &total
+	}
+	result.OnDemandEnabled = iu.OnDemand.Enabled
+	result.OnDemandUsed = iu.OnDemand.Used
+}
+
+func applyOverallUsage(result *UsageResult, info TeamUsageInfo) {
+	result.RequestsUsed = info.Used
+	if info.Limit != nil {
+		result.RequestsLimit = *info.Limit
+	}
+	result.RequestsRemaining = info.Remaining
+}
+
+func parseDisplayPercent(s string) (float64, bool) {
+	idx := strings.Index(strings.ToLower(s), "used ")
+	if idx < 0 {
+		return 0, false
+	}
+	rest := strings.TrimSpace(s[idx+5:])
+	end := strings.Index(rest, "%")
+	if end < 0 {
+		return 0, false
+	}
+	pct, err := strconv.ParseFloat(strings.TrimSpace(rest[:end]), 64)
+	if err != nil {
+		return 0, false
+	}
+	return pct, true
 }
 
 func parseAPITime(s string) time.Time {
