@@ -158,24 +158,46 @@ determine_bump() {
   fi
 }
 
+# Return leading digits from a semver component, or 0 if none.
+semver_numeric_part() {
+  local part="${1:-0}"
+  if [[ "${part}" =~ ^([0-9]+) ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "0"
+  fi
+}
+
+# Strip v prefix and pre-release/build metadata; leaves MAJOR.MINOR.PATCH (or partial).
+semver_core_version() {
+  local raw="${1#v}"
+  echo "${raw%%[-+]*}"
+}
+
 # Increment a semver string (without leading v)
 increment_version() {
   local version="$1"
   local bump="$2"
-  local major minor patch
+  local core ver_major ver_minor ver_patch
 
-  IFS='.' read -r major minor patch <<< "${version}"
-  major="${major:-0}"
-  minor="${minor:-0}"
-  patch="${patch:-0}"
+  core="$(semver_core_version "${version}")"
+  IFS='.' read -r ver_major ver_minor ver_patch _ <<< "${core}"
+  ver_major="$(semver_numeric_part "${ver_major}")"
+  ver_minor="$(semver_numeric_part "${ver_minor}")"
+  ver_patch="$(semver_numeric_part "${ver_patch}")"
 
-  case "${bump}" in
-    major) major=$((major + 1)); minor=0; patch=0 ;;
-    minor) minor=$((minor + 1)); patch=0 ;;
-    patch) patch=$((patch + 1)) ;;
-  esac
+  if [[ "${bump}" == "major" ]]; then
+    ver_major=$((ver_major + 1))
+    ver_minor=0
+    ver_patch=0
+  elif [[ "${bump}" == "minor" ]]; then
+    ver_minor=$((ver_minor + 1))
+    ver_patch=0
+  else
+    ver_patch=$((ver_patch + 1))
+  fi
 
-  echo "${major}.${minor}.${patch}"
+  echo "${ver_major}.${ver_minor}.${ver_patch}"
 }
 
 # ── Compute suggested tag ─────────────────────────────────────────────────────
@@ -186,8 +208,8 @@ if [[ -z "${LAST_TAG}" ]]; then
   BASE_VERSION="0.1.0"
   SUGGESTED_TAG="v0.1.0"
 else
-  # Strip leading 'v' for arithmetic
-  STRIPPED="${LAST_TAG#v}"
+  # Core semver only (no v prefix, pre-release, or build metadata)
+  STRIPPED="$(semver_core_version "${LAST_TAG}")"
   COMMIT_RANGE="${LAST_TAG}..HEAD"
   BUMP_LEVEL="$(determine_bump "${COMMIT_RANGE}")"
 

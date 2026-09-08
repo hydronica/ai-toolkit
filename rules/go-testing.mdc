@@ -8,13 +8,28 @@ alwaysApply: false
 
 For **bug fixes and regressions**, invoke `@red-green-bug-fix` (replication contract → RED → GREEN) before adding or changing tests here.
 
+## Planning (before writing tests)
+
+1. List existing `Test…` functions and note which use `trial`.
+2. Map each regression to a **target `Test…` and case name** before coding.
+3. Add a new top-level `Test…` only when assertion style or setup cannot share an existing harness (concurrency, env/globals, parse-only validity checks).
+
 ## Regression anchors
 
-- Name subtests or `trial` cases with issue ID and symptom: `issue #1234: returns 422 for duplicate email`.
+- Name `trial` cases or `t.Run` subtests with issue ID and symptom: `issue #1234: returns 422 for duplicate email`.
 - Run focused package tests: `go test -run '1234' -v ./path/to/package`.
-- Prefer one case per regression unless several share setup; use direct `t.Run` when a single scenario suffices.
+- Prefer **one table/`t.Run` case per regression**; do **not** add a new top-level `Test…` when an existing one covers the same API and assertion style.
 - If automation is blocked, `t.Skip` with issue ID, contract summary, and why (manual steps still required in PR).
 - For multi-case regression groups, add a brief comment above the cases stating trigger, expected behavior, and out-of-scope items (or link to issue/README).
+
+### Where to put a regression?
+
+1. Same golden output / harness → new **`trial` row** in that `Test…`
+2. Same API, different inputs only → **extend `input`**, new row
+3. Comparable non-string result (keys, counts) → **`trial` with expanded `Expected` struct**, or `error` from `testFn`
+4. Concurrency, races, env/globals → **standalone `Test…`** (not a shared table)
+5. Parse/schema validity only → **standalone `Test…`** or dedicated validity table
+6. Unsure → **ask**
 
 ## Test file layout
 
@@ -52,7 +67,13 @@ func TestParseInt(t *testing.T) {
 
 ### Table vs inline — one style per test
 
-Per `Test…` function: **all table/trial or all inline — never both**. Multiple cases → full table (no extra assertions after `SubTest`). Single case → direct test. Stateful/order-dependent → isolated subtests, not a shared table.
+Per `Test…` function: **all table/trial or all inline — never both**. Multiple cases → full table (no extra assertions after `SubTest`). Single case → direct test. Stateful/order-dependent → isolated `Test…`, not a shared table.
+
+When a case needs different inputs, **extend the existing `input` struct** (optional fields) instead of duplicating the harness in a new `Test…`.
+
+### Non-golden assertions with `trial`
+
+If `Expected` is not a single string, use a small result struct, return `error` from `testFn`, or use `ExpectedErr`. Do not default to `t.Run` only because the assertion is not a golden string.
 
 ### Test config types — placement hierarchy
 
