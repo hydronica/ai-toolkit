@@ -61,17 +61,28 @@ func run() error {
 	}
 
 	// Fall through to browser login.
-	rawCookie, err := runLogin(ctx, *browser)
+	session, err := runLogin(ctx, *browser)
 	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+
+	rawCookie, err := session.WaitForCookie()
+	if err != nil {
+		session.Close()
+		if errors.Is(err, ErrLoginBrowserClosed) {
+			return fmt.Errorf("login cancelled: browser was closed before sign-in completed")
+		}
 		return fmt.Errorf("login: %w", err)
 	}
 
 	// Persist the new cookie.
 	if err := writeEnvKey(envPath, "CURSOR_COOKIE", rawCookie); err != nil {
+		session.Close()
 		fmt.Fprintf(os.Stderr, "warning: could not save cookie to %s: %v\n", envPath, err)
 	} else {
 		fmt.Printf("Cookie saved to %s\n", envPath)
 	}
+	session.Close()
 
 	// Retry usage fetch with the new cookie.
 	result, err := fetchUsage(ctx, rawCookie, *debug)

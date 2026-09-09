@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os/exec"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/hydronica/trial"
 )
 
@@ -109,6 +114,66 @@ func TestChromiumGPUInitFlags(t *testing.T) {
 		"rejects disable-gpu-compositing": {Input: "no-compositing", Expected: "ok"},
 	}
 	trial.New(fn, cases).SubTest(t)
+}
+
+func TestWaitForLoginCookieBrowserClosed(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(ErrLoginBrowserClosed)
+	_, err := waitForLoginCookie(ctx, func(context.Context) (string, error) {
+		return "", nil
+	})
+	if !errors.Is(err, ErrLoginBrowserClosed) {
+		t.Fatalf("got %v want ErrLoginBrowserClosed", err)
+	}
+}
+
+func TestIsChromiumSessionLost(t *testing.T) {
+	if !isChromiumSessionLost(chromedp.ErrChannelClosed) {
+		t.Fatal("expected channel closed to count as session lost")
+	}
+	if isChromiumSessionLost(nil) {
+		t.Fatal("nil error should not count as session lost")
+	}
+}
+
+func TestLoginSessionClose(t *testing.T) {
+	cmd := exec.Command("sleep", "10")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	loginCtx, cancel := context.WithCancelCause(context.Background())
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		_ = cmd.Wait()
+		cancel(ErrLoginBrowserClosed)
+	}()
+
+	var shutdown sync.Once
+	session := &loginSession{
+		ctx: loginCtx,
+		closeFn: func() {
+			shutdown.Do(func() {
+				if cmd.Process != nil {
+					_ = cmd.Process.Kill()
+				}
+				<-exited
+			})
+		},
+		readCookie: func(context.Context) (string, error) { return "", nil },
+	}
+
+	session.Close()
+
+	select {
+	case <-loginCtx.Done():
+		if !errors.Is(context.Cause(loginCtx), ErrLoginBrowserClosed) {
+			t.Fatalf("cause: %v", context.Cause(loginCtx))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for session to end")
+	}
 }
 
 func TestLoginBrowserDiscovery(t *testing.T) {

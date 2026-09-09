@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
+
+var ErrLoginBrowserClosed = errors.New("login browser closed")
 
 var (
 	loginFindFirefox  = findFirefoxBrowser
@@ -46,17 +51,39 @@ const (
 	pollInterval = time.Second
 )
 
-// runLogin opens the system browser and waits for the user to authenticate on
-// cursor.com. Once WorkosCursorSessionToken appears in the browser's cookies the
-// raw value is returned (without the cookie name prefix). The context should
-// carry cancellation from the caller (e.g. Ctrl-C).
+// loginSession owns a dedicated browser opened for cursor.com login.
+// Call WaitForCookie, persist the cookie, then Close.
+type loginSession struct {
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	closeOnce  sync.Once
+	closeFn    func()
+	readCookie func(context.Context) (string, error)
+}
+
+// Close shuts down the browser instance this session opened.
+func (s *loginSession) Close() {
+	s.closeOnce.Do(func() {
+		if s.closeFn != nil {
+			s.closeFn()
+		}
+	})
+}
+
+// WaitForCookie polls until WorkosCursorSessionToken appears or the session ends.
+func (s *loginSession) WaitForCookie() (string, error) {
+	return waitForLoginCookie(s.ctx, s.readCookie)
+}
+
+// runLogin opens the system browser for cursor.com login and returns a session.
+// The caller's context should carry cancellation (e.g. Ctrl-C).
 //
 // preferred is the -browser flag value ("firefox" or "chromium"/"chrome").
 // When empty, Firefox is used if installed, otherwise Chromium, otherwise error.
-func runLogin(ctx context.Context, preferred string) (string, error) {
+func runLogin(ctx context.Context, preferred string) (*loginSession, error) {
 	browser, err := resolveLoginBrowser(preferred)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	label := "Firefox"
@@ -70,11 +97,11 @@ func runLogin(ctx context.Context, preferred string) (string, error) {
 
 	switch browser.engine {
 	case loginEngineFirefox:
-		return runFirefoxLogin(ctx, browser.path)
+		return newFirefoxSession(ctx, browser.path)
 	case loginEngineChromium:
-		return runChromiumLogin(ctx, browser.path)
+		return newChromiumSession(ctx, browser.path)
 	default:
-		return "", fmt.Errorf("unsupported login browser %q", browser.engine)
+		return nil, fmt.Errorf("unsupported login browser %q", browser.engine)
 	}
 }
 
@@ -109,67 +136,196 @@ func resolveLoginBrowser(preferred string) (loginBrowser, error) {
 	return loginBrowser{}, fmt.Errorf("no browser found for login (install Firefox or a Chromium-based browser)")
 }
 
-func runChromiumLogin(ctx context.Context, browserPath string) (string, error) {
+func newFirefoxSession(parent context.Context, firefoxPath string) (*loginSession, error) {
+	loginCtx, cancel := context.WithCancelCause(parent)
+
+	cmd, err := openFirefox(firefoxPath, loginURL)
+	if err != nil {
+		cancel(err)
+		return nil, fmt.Errorf("opening browser: %w", err)
+	}
+
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		_ = cmd.Wait()
+		cancel(ErrLoginBrowserClosed)
+	}()
+
+	var shutdown sync.Once
+	closeFn := func() {
+		shutdown.Do(func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			<-exited
+		})
+	}
+
+	return &loginSession{
+		ctx:    loginCtx,
+		cancel: cancel,
+		closeFn: closeFn,
+		readCookie: func(context.Context) (string, error) {
+			cookiesPath, err := firefoxCookiesPath()
+			if err != nil {
+				return "", nil
+			}
+			cookie, err := readFirefoxCookie(cookiesPath)
+			if err != nil {
+				return "", fmt.Errorf("reading cookies: %w", err)
+			}
+			return cookie, nil
+		},
+	}, nil
+}
+
+func newChromiumSession(parent context.Context, browserPath string) (*loginSession, error) {
+	loginCtx, cancel := context.WithCancelCause(parent)
+
 	// Build allocator options from scratch rather than inheriting
-	// DefaultExecAllocatorOptions so that automation-detection flags
-	// (--enable-automation, --disable-blink-features=AutomationControlled,
-	// --password-store=basic, etc.) are not present. Sites like cursor.com
-	// use these flags to detect CDP-driven browsers and show CAPTCHA challenges.
+	// DefaultExecAllocatorOptions, which enables headless mode and
+	// --enable-automation (sites like cursor.com may treat that as a bot).
 	opts := chromiumLoginAllocatorOptions(browserPath)
-
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
-	defer cancelAlloc()
-
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(loginCtx, opts...)
 	taskCtx, cancelTask := chromedp.NewContext(allocCtx)
-	defer cancelTask()
+
+	var shutdown sync.Once
+	closeFn := func() {
+		shutdown.Do(func() {
+			cancelTask()
+			cancelAlloc()
+		})
+	}
+
+	wireChromiumCloseSignals(taskCtx, cancel)
 
 	if err := chromedp.Run(taskCtx, chromedp.Navigate(loginURL)); err != nil {
-		return "", fmt.Errorf("opening browser: %w", err)
+		closeFn()
+		cancel(err)
+		return nil, fmt.Errorf("opening browser: %w", err)
 	}
 
-	return waitForLoginCookie(ctx, func() (string, error) {
-		return extractChromiumCookie(taskCtx)
-	})
+	return &loginSession{
+		ctx:     loginCtx,
+		cancel:  cancel,
+		closeFn: closeFn,
+		readCookie: func(context.Context) (string, error) {
+			cookie, err := extractChromiumCookie(taskCtx)
+			if err != nil && isChromiumSessionLost(err) {
+				return "", ErrLoginBrowserClosed
+			}
+			return cookie, err
+		},
+	}, nil
 }
 
-func runFirefoxLogin(ctx context.Context, firefoxPath string) (string, error) {
-	if err := openFirefox(firefoxPath, loginURL); err != nil {
-		return "", fmt.Errorf("opening browser: %w", err)
-	}
-
-	return waitForLoginCookie(ctx, func() (string, error) {
-		cookiesPath, err := firefoxCookiesPath()
-		if err != nil {
-			return "", nil
-		}
-		cookie, err := readFirefoxCookie(cookiesPath)
-		if err != nil {
-			return "", fmt.Errorf("reading cookies: %w", err)
-		}
-		return cookie, nil
-	})
-}
-
-func waitForLoginCookie(ctx context.Context, readCookie func() (string, error)) (string, error) {
+func waitForLoginCookie(ctx context.Context, readCookie func(context.Context) (string, error)) (string, error) {
 	deadline := time.Now().Add(loginTimeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		default:
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", loginContextErr(ctx)
 		}
 
-		cookie, err := readCookie()
+		cookie, err := readCookie(ctx)
+		if errors.Is(err, ErrLoginBrowserClosed) {
+			return "", err
+		}
 		if err != nil {
 			return "", err
 		}
 		if cookie != "" {
 			return cookie, nil
 		}
-		time.Sleep(pollInterval)
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", loginContextErr(ctx)
+		case <-ticker.C:
+		}
 	}
 
 	return "", fmt.Errorf("timed out after %s waiting for login", loginTimeout)
+}
+
+func loginContextErr(ctx context.Context) error {
+	if cause := context.Cause(ctx); errors.Is(cause, ErrLoginBrowserClosed) {
+		return ErrLoginBrowserClosed
+	}
+	return ctx.Err()
+}
+
+func wireChromiumCloseSignals(taskCtx context.Context, cancel context.CancelCauseFunc) {
+	c := chromedp.FromContext(taskCtx)
+	if c == nil || c.Browser == nil {
+		return
+	}
+
+	var (
+		loginTargetID  target.ID
+		loginSessionID target.SessionID
+		signalOnce     sync.Once
+	)
+	if c.Target != nil {
+		loginTargetID = c.Target.TargetID
+		loginSessionID = c.Target.SessionID
+	}
+
+	signalClosed := func() {
+		signalOnce.Do(func() { cancel(ErrLoginBrowserClosed) })
+	}
+
+	if proc := c.Browser.Process(); proc != nil {
+		go func() {
+			_, _ = proc.Wait()
+			signalClosed()
+		}()
+	}
+
+	go func() {
+		<-c.Browser.LostConnection
+		signalClosed()
+	}()
+
+	go func() {
+		<-taskCtx.Done()
+		signalClosed()
+	}()
+
+	chromedp.ListenBrowser(taskCtx, func(ev any) {
+		switch ev := ev.(type) {
+		case *target.EventTargetDestroyed:
+			if loginTargetID != "" && ev.TargetID == loginTargetID {
+				signalClosed()
+			}
+		case *target.EventDetachedFromTarget:
+			if loginSessionID != "" && ev.SessionID == loginSessionID {
+				signalClosed()
+			}
+		}
+	})
+}
+
+func isChromiumSessionLost(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, chromedp.ErrChannelClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "target closed") ||
+		strings.Contains(msg, "connection closed") ||
+		strings.Contains(msg, "websocket") ||
+		strings.Contains(msg, "not attached") ||
+		strings.Contains(msg, "browser has gone")
 }
 
 // extractChromiumCookie reads WorkosCursorSessionToken from a CDP browser.
@@ -192,11 +348,12 @@ func extractChromiumCookie(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// chromiumLoginAllocatorOptions returns chromedp options for opening a visible
-// Chromium-based browser for login. GPU acceleration is disabled by default.
+// chromiumLoginAllocatorOptions returns chromedp options for a visible login
+// window. GPU flags are applied separately; other flags are limited to skipping
+// first-run prompts and selecting the browser executable.
 func chromiumLoginAllocatorOptions(browserPath string) []chromedp.ExecAllocatorOption {
 	flags := chromiumGPUInitFlags()
-	opts := make([]chromedp.ExecAllocatorOption, 0, len(flags)+8)
+	opts := make([]chromedp.ExecAllocatorOption, 0, len(flags)+5)
 	for name, value := range flags {
 		opts = append(opts, chromedp.Flag(name, value))
 	}
@@ -204,8 +361,6 @@ func chromiumLoginAllocatorOptions(browserPath string) []chromedp.ExecAllocatorO
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.Flag("headless", false),
-		chromedp.Flag("disable-blink-features", "AutomationControlled"),
-		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
 		chromedp.ExecPath(browserPath),
 	)
 	if runtime.GOOS == "linux" {

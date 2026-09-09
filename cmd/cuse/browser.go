@@ -136,14 +136,18 @@ func chromiumInstallPaths() []string {
 	}
 }
 
-// openFirefox launches Firefox for login. GPU acceleration is disabled by default.
-func openFirefox(firefoxPath, url string) error {
+// openFirefox launches a dedicated Firefox instance for login (-no-remote).
+// GPU acceleration is disabled by default.
+func openFirefox(firefoxPath, url string) (*exec.Cmd, error) {
 	cmd := exec.Command(firefoxPath, "-no-remote", url)
 	cmd.Env = append(os.Environ(),
 		"MOZ_WEBRENDER=0",
 		"LIBGL_ALWAYS_SOFTWARE=1",
 	)
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return cmd, nil
 }
 
 func firefoxCookiesPath() (string, error) {

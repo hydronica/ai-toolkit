@@ -31,7 +31,7 @@ go install cmd/cuse  # installs to $GOPATH/bin
 cuse
 ```
 
-On first run (or when your session expires), cuse opens a browser window for you to log in at cursor.com. GPU acceleration is disabled by default for login. After authenticating, the session cookie is saved to `.env` so subsequent runs work automatically.
+On first run (or when your session expires), cuse opens a dedicated browser window for you to log in at cursor.com. GPU acceleration is disabled by default for login. Closing that window before sign-in completes cancels login. After the cookie is saved to `.env`, cuse closes only the browser instance it opened.
 
 Example output:
 
