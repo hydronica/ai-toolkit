@@ -25,7 +25,7 @@ func main() {
 func run() error {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	debug := flag.Bool("debug", false, "print raw API responses")
-	browser := flag.String("browser", "", "browser for login: firefox or chromium (default: firefox on Linux, chromium elsewhere)")
+	browser := flag.String("browser", "", "browser for login: firefox or chromium (default: first installed)")
 	flag.Parse()
 
 	if *showVersion {

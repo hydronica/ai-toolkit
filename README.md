@@ -30,15 +30,17 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/hydronica/ai-toolkit/main/
 - `${HOME}/.cursor/commands/ai-toolkit`
 - `${HOME}/.cursor/skills/ai-toolkit`
 - `${HOME}/.cursor/agents/ai-toolkit`
-- `${HOME}/.cursor/ai-toolkit` — scripts, canonical `rules-source/`, and `projects.registry` (e.g. `install-rules.sh`). Add that directory to `PATH` if you want to run scripts by name; see the post-install hint from `install.sh`.
+- `${HOME}/.cursor/ai-toolkit` — scripts, canonical `rules-source/`, `projects.registry`, and `install-manifest.json` (e.g. `install-rules.sh`). Add that directory to `PATH` if you want to run scripts by name; see the post-install hint from `install.sh`.
 
 Other bundled scripts include `review_sum.sh` (PR-ready context; no `gh` required). Some scripts require the [GitHub CLI](https://cli.github.com/) (`gh`) with `gh auth login` completed — notably `pr_sum.sh` and `release_sum.sh`. `install.sh` checks for `gh` after install and prints setup instructions if it is missing or not authenticated.
 
-`install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode. Pass `--no-sync-rules` to skip refreshing registered project rules.
+`install.sh` will try to symlink assets when run from a local clone, or copy them when installing from the remote tarball. Use `./install.sh --copy` or `./install.sh --link` to force a mode.
 
-Each run replaces the existing `ai-toolkit` entry under each category and refreshes scripts and `rules-source/` under `${HOME}/.cursor/ai-toolkit/` while preserving `projects.registry` and local config (e.g. `cuse`’s `.env`). Online installs need `curl` and `tar`.
+**Smart updates:** Re-running `install.sh` compares the current source (`main` commit for online installs, local `git` HEAD for clones) to `~/.cursor/ai-toolkit/install-manifest.json`. When nothing changed, asset reinstall and rule sync are skipped. Use `./install.sh --check` to preview the plan, `--force` to reinstall anyway, `--sync-rules` to refresh registered project rules when assets are unchanged, and `--no-binaries` to skip building or downloading `cuse` and `db-query`.
 
-Re-running `install.sh` updates `rules-source/` and **syncs all registered projects** by default (copy-mode projects get fresh rule files; link-mode projects get reconciled symlinks).
+From a local clone with Go installed, `install.sh` builds `cuse` and `db-query` via `make`. In **link** mode (default for local clones), those binaries are symlinked from `scripts/` into `~/.cursor/ai-toolkit/`, so `make cuse` updates the binary on your `PATH` immediately. Copy mode and online installs copy or download release binaries instead.
+
+Pass `--no-sync-rules` to skip refreshing registered project rules when assets do change.
 
 ### uninstall
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -10,6 +11,33 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
+
+var (
+	loginFindFirefox  = findFirefoxBrowser
+	loginFindChromium = findChromiumBrowser
+)
+
+type loginEngine string
+
+const (
+	loginEngineFirefox  loginEngine = "firefox"
+	loginEngineChromium loginEngine = "chromium"
+)
+
+type loginBrowser struct {
+	engine loginEngine
+	path   string
+}
+
+type browserChoice struct {
+	engine loginEngine
+	label  string
+}
+
+var loginBrowserOrder = []browserChoice{
+	{loginEngineFirefox, "Firefox"},
+	{loginEngineChromium, "Chromium-based browser"},
+}
 
 const (
 	loginURL     = "https://cursor.com/dashboard"
@@ -23,36 +51,62 @@ const (
 // raw value is returned (without the cookie name prefix). The context should
 // carry cancellation from the caller (e.g. Ctrl-C).
 //
-// preferred selects the browser: "firefox" or "chromium"/"chrome". Empty defaults
-// to Firefox on Linux and Chromium elsewhere (no cross-browser fallback).
+// preferred is the -browser flag value ("firefox" or "chromium"/"chrome").
+// When empty, Firefox is used if installed, otherwise Chromium, otherwise error.
 func runLogin(ctx context.Context, preferred string) (string, error) {
-	fmt.Println("Opening browser — please log in at cursor.com...")
-
-	preferred = strings.ToLower(preferred)
-	if preferred == "" {
-		if runtime.GOOS == "linux" {
-			preferred = "firefox"
-		} else {
-			preferred = "chromium"
-		}
+	browser, err := resolveLoginBrowser(preferred)
+	if err != nil {
+		return "", err
 	}
 
-	switch preferred {
-	case "firefox":
-		path := findFirefoxBrowser()
-		if path == "" {
-			return "", fmt.Errorf("Firefox not found")
+	label := "Firefox"
+	if browser.engine == loginEngineChromium {
+		label = strings.TrimSuffix(filepath.Base(browser.path), ".exe")
+		if label == "" {
+			label = "Chromium"
 		}
-		return runFirefoxLogin(ctx, path)
-	case "chromium", "chrome":
-		path := findChromiumBrowser()
-		if path == "" {
-			return "", fmt.Errorf("Chromium-based browser not found")
-		}
-		return runChromiumLogin(ctx, path)
+	}
+	fmt.Printf("Opening %s — please log in at cursor.com...\n", label)
+
+	switch browser.engine {
+	case loginEngineFirefox:
+		return runFirefoxLogin(ctx, browser.path)
+	case loginEngineChromium:
+		return runChromiumLogin(ctx, browser.path)
 	default:
-		return "", fmt.Errorf("invalid -browser value %q (use \"firefox\" or \"chromium\")", preferred)
+		return "", fmt.Errorf("unsupported login browser %q", browser.engine)
 	}
+}
+
+func resolveLoginBrowser(preferred string) (loginBrowser, error) {
+	preferred = strings.ToLower(strings.TrimSpace(preferred))
+	if preferred == "chrome" {
+		preferred = string(loginEngineChromium)
+	}
+
+	for _, choice := range loginBrowserOrder {
+		if preferred != "" && preferred != string(choice.engine) {
+			continue
+		}
+		var path string
+		switch choice.engine {
+		case loginEngineFirefox:
+			path = loginFindFirefox()
+		case loginEngineChromium:
+			path = loginFindChromium()
+		}
+		if path == "" {
+			if preferred != "" {
+				return loginBrowser{}, fmt.Errorf("%s not found", choice.label)
+			}
+			continue
+		}
+		return loginBrowser{engine: choice.engine, path: path}, nil
+	}
+	if preferred != "" {
+		return loginBrowser{}, fmt.Errorf(`invalid -browser value %q (use "firefox" or "chromium")`, preferred)
+	}
+	return loginBrowser{}, fmt.Errorf("no browser found for login (install Firefox or a Chromium-based browser)")
 }
 
 func runChromiumLogin(ctx context.Context, browserPath string) (string, error) {
@@ -61,16 +115,7 @@ func runChromiumLogin(ctx context.Context, browserPath string) (string, error) {
 	// (--enable-automation, --disable-blink-features=AutomationControlled,
 	// --password-store=basic, etc.) are not present. Sites like cursor.com
 	// use these flags to detect CDP-driven browsers and show CAPTCHA challenges.
-	opts := []chromedp.ExecAllocatorOption{
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Flag("headless", false),
-		chromedp.Flag("disable-blink-features", "AutomationControlled"),
-		chromedp.Flag("no-sandbox", true),
-		chromedp.Flag("disable-setuid-sandbox", true),
-		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-		chromedp.ExecPath(browserPath),
-	}
+	opts := chromiumLoginAllocatorOptions(browserPath)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(ctx, opts...)
 	defer cancelAlloc()
@@ -145,4 +190,50 @@ func extractChromiumCookie(ctx context.Context) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// chromiumLoginAllocatorOptions returns chromedp options for opening a visible
+// Chromium-based browser for login. GPU acceleration is disabled by default.
+func chromiumLoginAllocatorOptions(browserPath string) []chromedp.ExecAllocatorOption {
+	flags := chromiumGPUInitFlags()
+	opts := make([]chromedp.ExecAllocatorOption, 0, len(flags)+8)
+	for name, value := range flags {
+		opts = append(opts, chromedp.Flag(name, value))
+	}
+	opts = append(opts,
+		chromedp.NoFirstRun,
+		chromedp.NoDefaultBrowserCheck,
+		chromedp.Flag("headless", false),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+		chromedp.ExecPath(browserPath),
+	)
+	if runtime.GOOS == "linux" {
+		opts = append(opts,
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-setuid-sandbox", true),
+		)
+	}
+	return opts
+}
+
+// chromiumGPUInitFlags returns Chrome flags that disable hardware acceleration
+// while keeping the compositor on a working SwiftShader/ANGLE software path.
+// Do not set disable-gpu-compositing: it forces a broken software compositor
+// that shows red damage rectangles on some GPUs (common on Brave/Chromium 152).
+func chromiumGPUInitFlags() map[string]any {
+	flags := map[string]any{
+		"disable-gpu":               true,
+		"enable-unsafe-swiftshader": true,
+		"use-gl":                    "angle",
+		"use-angle":                 "swiftshader",
+		"disable-dev-shm-usage":     true,
+	}
+	switch runtime.GOOS {
+	case "windows":
+		flags["disable-direct-composition"] = true
+	case "darwin":
+		flags["disable-features"] = "Vulkan"
+	}
+	return flags
 }

@@ -31,7 +31,7 @@ go install cmd/cuse  # installs to $GOPATH/bin
 cuse
 ```
 
-On first run (or when your session expires), cuse will open a browser window for you to log in to cursor.com. After authenticating, the session cookie is saved to `.env` so subsequent runs work automatically.
+On first run (or when your session expires), cuse opens a browser window for you to log in at cursor.com. GPU acceleration is disabled by default for login. After authenticating, the session cookie is saved to `.env` so subsequent runs work automatically.
 
 Example output:
 
@@ -51,4 +51,4 @@ On-demand:       $2,000.00 spent
 
 - `-version` — Print version and exit
 - `-debug` — Print raw API responses for troubleshooting
-- `-browser firefox|chromium` — Browser for login. Defaults to Firefox on Linux and a Chromium-based browser (Chrome, Edge, Brave) on Windows/macOS.
+- `-browser firefox|chromium` — Browser for login. When unset, uses Firefox if installed, otherwise a Chromium-based browser (Chrome, Edge, Brave).

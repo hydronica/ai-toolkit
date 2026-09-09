@@ -136,13 +136,14 @@ func chromiumInstallPaths() []string {
 	}
 }
 
-// openFirefox launches Firefox with the given URL using the specified executable.
+// openFirefox launches Firefox for login. GPU acceleration is disabled by default.
 func openFirefox(firefoxPath, url string) error {
-	if runtime.GOOS == "darwin" && strings.HasSuffix(firefoxPath, ".app/Contents/MacOS/firefox") {
-		appPath := strings.TrimSuffix(firefoxPath, "/Contents/MacOS/firefox")
-		return exec.Command("open", "-a", appPath, url).Start()
-	}
-	return exec.Command(firefoxPath, url).Start()
+	cmd := exec.Command(firefoxPath, "-no-remote", url)
+	cmd.Env = append(os.Environ(),
+		"MOZ_WEBRENDER=0",
+		"LIBGL_ALWAYS_SOFTWARE=1",
+	)
+	return cmd.Start()
 }
 
 func firefoxCookiesPath() (string, error) {
