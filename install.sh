@@ -31,14 +31,13 @@ PLAN_INSTALLED_SOURCE=""
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--link|--copy] [--check] [--force] [--no-binaries]
+Usage: install.sh [--link|--copy] [--check] [--force]
                   [--sync-rules] [--no-sync-rules] [--check-attribution]
 
   --link               Link from local ai-toolkit source when available
   --copy               Copy from local/online source
   --check              Print install plan and exit (no changes)
   --force              Reinstall assets and binaries even when unchanged
-  --no-binaries        Skip building or downloading Go binaries
   --sync-rules         Sync registered project rules even when assets unchanged
   --no-sync-rules      Skip syncing registered project rules after install
   --check-attribution  Print CLI/IDE attribution status and exit (no install)
@@ -48,6 +47,9 @@ Installs to ${HOME}/.cursor/(commands|skills|agents)/ai-toolkit/
 Installs scripts/, rules-source/, and registry support under ${HOME}/.cursor/ai-toolkit/
 Records install state in ~/.cursor/ai-toolkit/install-manifest.json (not projects.registry).
 Syncs registered project rules when assets change — see scripts/install-rules.sh.
+
+jq is recommended for install-manifest tracking and attribution checks; install succeeds
+without it but smart updates and attribution status may be unavailable.
 EOF
 }
 
@@ -226,44 +228,43 @@ check_gh() {
   fi
 }
 
+jq_available() {
+  command -v jq >/dev/null 2>&1
+}
+
+jq_install_hint() {
+  local os
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "${os}" in
+    darwin)
+      echo "brew install jq"
+      ;;
+    linux)
+      echo "sudo apt install jq  # or your distro package manager"
+      ;;
+    mingw*|msys*|cygwin*)
+      echo "winget install jqlang.jq  # or see https://jqlang.org/download/"
+      ;;
+    *)
+      echo "see https://jqlang.org/download/"
+      ;;
+  esac
+}
+
 manifest_field() {
-  local field="$1"
-  if [[ ! -f "${INSTALL_MANIFEST}" ]]; then
+  local field="$1" value
+  if [[ ! -f "${INSTALL_MANIFEST}" ]] || ! jq_available; then
     return 0
   fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    return 0
+  value="$(jq -r --arg f "${field}" 'if type == "object" then .[$f] // empty else empty end' "${INSTALL_MANIFEST}" 2>/dev/null || true)"
+  if [[ -n "${value}" && "${value}" != "null" ]]; then
+    printf '%s\n' "${value}"
   fi
-  python3 - "${INSTALL_MANIFEST}" "${field}" <<'PY'
-import json, sys
-path, field = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as f:
-        data = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    sys.exit(0)
-if "." in field:
-    cur = data
-    for part in field.split("."):
-        if not isinstance(cur, dict):
-            cur = None
-            break
-        cur = cur.get(part)
-    value = cur
-else:
-    value = data.get(field)
-if value is None:
-    sys.exit(0)
-if isinstance(value, dict):
-    print(json.dumps(value))
-else:
-    print(value)
-PY
 }
 
 write_install_manifest() {
   local commit="$1" version="$2" source="$3" mode="$4"
-  local cuse_version="" db_query_version=""
+  local cuse_version="" db_query_version="" installed_at
   mkdir -p "${BIN_TARGET}"
   if [[ -x "${BIN_TARGET}/cuse" ]]; then
     cuse_version="$("${BIN_TARGET}/cuse" -version 2>/dev/null || true)"
@@ -271,39 +272,45 @@ write_install_manifest() {
   if [[ -x "${BIN_TARGET}/db-query" ]]; then
     db_query_version="$("${BIN_TARGET}/db-query" -version 2>/dev/null || true)"
   fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "Warning: python3 not found; could not write ${INSTALL_MANIFEST}" >&2
+  if ! jq_available; then
+    echo "Warning: jq not found; could not write ${INSTALL_MANIFEST}" >&2
+    echo "  Install jq: $(jq_install_hint)" >&2
     return 0
   fi
-  python3 - "${INSTALL_MANIFEST}" "${commit}" "${version}" "${source}" "${mode}" "${cuse_version}" "${db_query_version}" <<'PY'
-import json, sys
-from datetime import datetime, timezone
-path, commit, version, source, mode, cuse, db_query = sys.argv[1:8]
-data = {
-    "version": version,
-    "commit": commit,
-    "source": source,
-    "mode": mode,
-    "installed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-    "binaries": {},
-}
-if cuse:
-    data["binaries"]["cuse"] = cuse
-if db_query:
-    data["binaries"]["db-query"] = db_query
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+  installed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  if ! jq -n \
+    --arg version "${version}" \
+    --arg commit "${commit}" \
+    --arg source "${source}" \
+    --arg mode "${mode}" \
+    --arg installed_at "${installed_at}" \
+    --arg cuse "${cuse_version}" \
+    --arg db_query "${db_query_version}" \
+    '{
+      version: $version,
+      commit: $commit,
+      source: $source,
+      mode: $mode,
+      installed_at: $installed_at,
+      binaries: (
+        {}
+        | if $cuse != "" then . + {cuse: $cuse} else . end
+        | if $db_query != "" then . + {"db-query": $db_query} else . end
+      )
+    }' > "${INSTALL_MANIFEST}"; then
+    echo "Warning: jq failed writing ${INSTALL_MANIFEST}" >&2
+    return 0
+  fi
 }
 
 fetch_online_main_commit() {
   require_command curl
-  local sha
-  if command -v python3 >/dev/null 2>&1; then
-    sha="$(curl -fsSL "${GITHUB_MAIN_API}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')"
+  local sha response
+  response="$(curl -fsSL "${GITHUB_MAIN_API}")" || die "Failed to resolve main branch commit from GitHub API"
+  if jq_available; then
+    sha="$(printf '%s' "${response}" | jq -er '.sha' 2>/dev/null || true)"
   else
-    sha="$(curl -fsSL "${GITHUB_MAIN_API}" | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/')"
+    sha="$(printf '%s' "${response}" | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/')"
   fi
   [[ -n "${sha}" ]] || die "Failed to resolve main branch commit from GitHub API"
   echo "${sha}"
@@ -463,7 +470,7 @@ binaries_need_update() {
 }
 
 plan_install() {
-  local source_root="$1" source_kind="$2" mode="$3" force="$4" no_binaries="$5" force_sync_rules="$6" no_sync_rules="$7"
+  local source_root="$1" source_kind="$2" mode="$3" force="$4" force_sync_rules="$5" no_sync_rules="$6"
   local identity commit version installed_commit installed_mode installed_source assets_unchanged
 
   identity="$(source_identity "${source_root}" "${source_kind}")"
@@ -494,9 +501,7 @@ plan_install() {
     PLAN_ASSETS_ACTION="skip"
   fi
 
-  if [[ "${no_binaries}" == "true" ]]; then
-    PLAN_BINARIES_ACTION="skip"
-  elif binaries_need_update "${source_kind}" "${source_root}" "${commit}" "${force}" "${mode}"; then
+  if binaries_need_update "${source_kind}" "${source_root}" "${commit}" "${force}" "${mode}"; then
     PLAN_BINARIES_ACTION="install"
   else
     PLAN_BINARIES_ACTION="skip"
@@ -673,43 +678,51 @@ cursor_ide_vscdb_path() {
   esac
 }
 
-# read_cli_attribution_flag prints "true" or "false". Missing keys default to true per Cursor docs.
+# read_cli_attribution_flag prints "true", "false", or "unknown".
+# Missing keys default to true per Cursor docs.
 read_cli_attribution_flag() {
-  local config="$1" key="$2"
+  local config="$1" key="$2" value
   if [[ ! -f "${config}" ]]; then
     echo "true"
     return 0
   fi
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "${config}" "${key}" <<'PY'
-import json, sys
-with open(sys.argv[1]) as f:
-    data = json.load(f)
-value = data.get("attribution", {}).get(sys.argv[2])
-if value is True:
-    print("true")
-elif value is False:
-    print("false")
-else:
-    print("true")
-PY
+  if ! jq_available; then
+    echo "unknown"
     return 0
   fi
-  if grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*false" "${config}"; then
-    echo "false"
-  elif grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*true" "${config}"; then
-    echo "true"
-  else
-    echo "true"
-  fi
+  value="$(jq -er --arg key "${key}" '
+    if type != "object" then "unknown"
+    elif (.attribution | type) == "object" then
+      if .attribution[$key] == true then "true"
+      elif .attribution[$key] == false then "false"
+      else "true" end
+    elif .attribution == null then "true"
+    else "unknown" end
+  ' "${config}" 2>/dev/null || echo "unknown")"
+  echo "${value}"
 }
 
-attribution_enabled_label() {
-  if [[ "$1" == "true" ]]; then
-    echo "enabled"
-  else
-    echo "disabled"
-  fi
+attribution_status_label() {
+  case "$1" in
+    true) echo "enabled" ;;
+    false) echo "disabled" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+cli_attribution_line() {
+  local label="$1" value="$2"
+  case "${value}" in
+    true)
+      echo "  ${label}: enabled"
+      ;;
+    false)
+      echo "  ${label}: disabled"
+      ;;
+    *)
+      echo "  ${label}: unknown (could not read cli-config.json)"
+      ;;
+  esac
 }
 
 # read_ide_attribution_flag prints "true" or "false". Missing keys default to true per Cursor docs.
@@ -736,14 +749,20 @@ check_attribution() {
   echo "Cursor attribution:"
 
   cli_config="$(cursor_cli_config_path)"
-  commits="$(read_cli_attribution_flag "${cli_config}" "attributeCommitsToAgent")"
-  prs="$(read_cli_attribution_flag "${cli_config}" "attributePRsToAgent")"
-  echo "  CLI commits: $(attribution_enabled_label "${commits}")"
-  echo "  CLI PRs:     $(attribution_enabled_label "${prs}")"
-  if [[ "${commits}" == "true" || "${prs}" == "true" ]]; then
-    echo "    Disable in ${cli_config}:"
-    echo "      attribution.attributeCommitsToAgent: false"
-    echo "      attribution.attributePRsToAgent: false"
+  if ! jq_available; then
+    echo "  CLI commits: unknown (jq not installed)"
+    echo "  CLI PRs:     unknown (jq not installed)"
+    echo "    Install jq: $(jq_install_hint)"
+  else
+    commits="$(read_cli_attribution_flag "${cli_config}" "attributeCommitsToAgent")"
+    prs="$(read_cli_attribution_flag "${cli_config}" "attributePRsToAgent")"
+    cli_attribution_line "CLI commits" "${commits}"
+    cli_attribution_line "CLI PRs" "${prs}"
+    if [[ "${commits}" == "true" || "${prs}" == "true" ]]; then
+      echo "    Disable in ${cli_config}:"
+      echo "      attribution.attributeCommitsToAgent: false"
+      echo "      attribution.attributePRsToAgent: false"
+    fi
   fi
 
   if ! command -v sqlite3 >/dev/null 2>&1; then
@@ -761,8 +780,8 @@ check_attribution() {
 
   ide_commits="$(read_ide_attribution_flag "${vscdb}" "cursor/attributeCommitsToAgent")"
   ide_prs="$(read_ide_attribution_flag "${vscdb}" "cursor/attributePRsToAgent")"
-  echo "  IDE commits: $(attribution_enabled_label "${ide_commits}")"
-  echo "  IDE PRs:     $(attribution_enabled_label "${ide_prs}")"
+  echo "  IDE commits: $(attribution_status_label "${ide_commits}")"
+  echo "  IDE PRs:     $(attribution_status_label "${ide_prs}")"
   if [[ "${ide_commits}" == "true" || "${ide_prs}" == "true" ]]; then
     echo "    Disable in Cursor Settings → Git & PRs → Attribution"
   fi
@@ -770,7 +789,7 @@ check_attribution() {
 
 main() {
   local requested_mode="" sync_rules="true" check_attribution_only="false"
-  local check_only="false" force_install="false" no_binaries="false" force_sync_rules="false"
+  local check_only="false" force_install="false" force_sync_rules="false"
   while (($# > 0)); do
     case "$1" in
       --link)
@@ -784,9 +803,6 @@ main() {
         ;;
       --force)
         force_install="true"
-        ;;
-      --no-binaries)
-        no_binaries="true"
         ;;
       --sync-rules)
         force_sync_rules="true"
@@ -841,7 +857,7 @@ main() {
     used_fallback="true"
   fi
 
-  plan_install "${source_root}" "${source_kind}" "${mode}" "${force_install}" "${no_binaries}" "${force_sync_rules}" "${no_sync_rules}"
+  plan_install "${source_root}" "${source_kind}" "${mode}" "${force_install}" "${force_sync_rules}" "${no_sync_rules}"
 
   if [[ "${check_only}" == "true" ]]; then
     print_install_plan "${source_root}"
@@ -899,4 +915,6 @@ main() {
   check_gh
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

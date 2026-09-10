@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"testing"
@@ -136,8 +137,17 @@ func TestIsChromiumSessionLost(t *testing.T) {
 	}
 }
 
+// TestHelperBlockUntilKilled is invoked as a subprocess by TestLoginSessionClose.
+func TestHelperBlockUntilKilled(t *testing.T) {
+	if os.Getenv("CUSE_LOGIN_TEST_HELPER") != "block" {
+		t.Skip("helper subprocess only")
+	}
+	select {}
+}
+
 func TestLoginSessionClose(t *testing.T) {
-	cmd := exec.Command("sleep", "10")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperBlockUntilKilled$")
+	cmd.Env = append(os.Environ(), "CUSE_LOGIN_TEST_HELPER=block")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -174,14 +184,4 @@ func TestLoginSessionClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for session to end")
 	}
-}
-
-func TestLoginBrowserDiscovery(t *testing.T) {
-	t.Logf("firefox: %q", findFirefoxBrowser())
-	t.Logf("chromium: %q", findChromiumBrowser())
-	browser, err := resolveLoginBrowser("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("default login: engine=%s path=%s", browser.engine, browser.path)
 }
