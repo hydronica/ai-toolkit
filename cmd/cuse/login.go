@@ -198,13 +198,15 @@ func newChromiumSession(parent context.Context, browserPath string) (*loginSessi
 		})
 	}
 
-	wireChromiumCloseSignals(taskCtx, cancel)
-
 	if err := chromedp.Run(taskCtx, chromedp.Navigate(loginURL)); err != nil {
 		closeFn()
 		cancel(err)
 		return nil, fmt.Errorf("opening browser: %w", err)
 	}
+
+	// chromedp allocates the browser on the first Run; wiring earlier is a no-op
+	// because FromContext().Browser is still nil.
+	wireChromiumCloseSignals(taskCtx, cancel)
 
 	return &loginSession{
 		ctx:     loginCtx,
@@ -280,13 +282,6 @@ func wireChromiumCloseSignals(taskCtx context.Context, cancel context.CancelCaus
 
 	signalClosed := func() {
 		signalOnce.Do(func() { cancel(ErrLoginBrowserClosed) })
-	}
-
-	if proc := c.Browser.Process(); proc != nil {
-		go func() {
-			_, _ = proc.Wait()
-			signalClosed()
-		}()
 	}
 
 	go func() {
