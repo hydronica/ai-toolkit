@@ -9,9 +9,9 @@ Prefer **explicit errors**, **synchronous APIs** unless concurrency is intrinsic
 
 **File layout:** one primary `.go` file per package until ~400+ lines or distinct subsystems; see **`go-project-structure.md`**.
 
-**Planning:** for behavior changes, API changes, or bug fixes, read **`go-testing.mdc`** (planning section) and map regressions to tests before implementation.
+**Planning:** for behavior changes, API changes, or bug fixes, read **`go-testing.mdc`** (planning + bug-fix test checklist) and map regressions to tests before implementation — **before** writing test code, not after.
 
-Tests: when editing `*_test.go`, follow **`go-testing.mdc`** alongside this rule.
+Tests: when editing `*_test.go`, follow **`go-testing.mdc`** alongside this rule. For bug fixes, prefer a new **`trial` row** with golden `Expected` in the existing `Test…`; do not invent parallel harnesses.
 
 Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorganizing module layout, **read `go-project-structure.md`** in this directory before changing structure.
 
