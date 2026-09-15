@@ -1,5 +1,5 @@
 ---
-description: Table-driven Go tests, fakes at system boundaries, useful failures, parallelism, examples.
+description: Table-driven Go tests with trial, golden Expected, regression placement; read for any bug fix or test edit even when starting on non-test files.
 globs: "**/*_test.go"
 alwaysApply: false
 ---
@@ -8,13 +8,42 @@ alwaysApply: false
 
 For **bug fixes and regressions**, invoke `@red-green-bug-fix` (replication contract → RED → GREEN) before adding or changing tests here.
 
+**Load this rule** when a task edits `*_test.go`, adds regressions, or a suggested-fix prompt lists test paths — even if you start on production code first (`go-standards.mdc` defers here for test planning).
+
+## Planning (before writing tests)
+
+1. **Read existing `Test…` functions in the target file** and note which use `trial`, inline tests, and input/Expected shapes.
+2. Map each regression to a **target `Test…` and case name** before coding.
+3. **Extend the current harness** — new regression → new `trial` row (or new inline case) in that `Test…`; do not introduce a parallel style.
+4. Add a new top-level `Test…` only when assertion style or setup cannot share an existing harness (concurrency, env/globals, parse-only validity checks).
+
 ## Regression anchors
 
-- Name subtests or `trial` cases with issue ID and symptom: `issue #1234: returns 422 for duplicate email`.
+- Name `trial` cases or `t.Run` subtests with issue ID and symptom: `issue #1234: returns 422 for duplicate email`.
 - Run focused package tests: `go test -run '1234' -v ./path/to/package`.
-- Prefer one case per regression unless several share setup; use direct `t.Run` when a single scenario suffices.
+- Prefer **one table/`t.Run` case per regression**; do **not** add a new top-level `Test…` when an existing one covers the same API and assertion style.
 - If automation is blocked, `t.Skip` with issue ID, contract summary, and why (manual steps still required in PR).
 - For multi-case regression groups, add a brief comment above the cases stating trigger, expected behavior, and out-of-scope items (or link to issue/README).
+
+### Where to put a regression?
+
+1. Same golden output / harness → new **`trial` row** in that `Test…` (**default**)
+2. Same API, different inputs only → **extend `input`**, new row
+3. Comparable non-string result (keys, counts) → **`trial` with expanded `Expected` struct**, or `error` from `testFn`
+4. Concurrency, races, env/globals → **standalone `Test…`** (not a shared table)
+5. Parse/schema validity only → **standalone `Test…`** or dedicated validity table
+6. Unsure → **ask**
+
+### Bug-fix test checklist
+
+When fixing a bug that needs a regression test:
+
+1. Read existing `Test…` functions in that `*_test.go` **first**.
+2. **Match the harness exactly** (`trial` vs inline) — never mix styles in one `Test…`.
+3. **Prefer golden `Expected`** when output is deterministic (string, number, struct). A new row with `Input` / `Expected` is usually enough.
+4. Do **not** add round-trip checks, semantic re-parse steps, or extra logic in `testFn` when `Expected` already fails on the bug.
+5. Do **not** add nested `t.Run` loops, package-level assert helpers, or extended input structs with optional assertion flags unless golden `Expected` cannot express pass vs fail.
+6. Escalate to struct `Expected`, struct `input`, or `error` from `testFn` **only** when the contract is not a single comparable return value.
 
 ## Test file layout
 
@@ -52,7 +81,19 @@ func TestParseInt(t *testing.T) {
 
 ### Table vs inline — one style per test
 
-Per `Test…` function: **all table/trial or all inline — never both**. Multiple cases → full table (no extra assertions after `SubTest`). Single case → direct test. Stateful/order-dependent → isolated subtests, not a shared table.
+Per `Test…` function: **all table/trial or all inline — never both**. Multiple cases → full table (no extra assertions after `SubTest`). Single case → direct test. Stateful/order-dependent → isolated `Test…`, not a shared table.
+
+When a case needs different inputs, **extend the existing `input` struct** (optional fields) instead of duplicating the harness in a new `Test…`.
+
+### Golden `Expected` first
+
+When the function under test returns a deterministic value (especially `string`), **add an `Input` / `Expected` row**. If the bug changes that output, golden comparison catches it — no ParseQuery round-trips, no duplicate assertions in `testFn`.
+
+Escalate only when golden output cannot distinguish pass from fail (counts, multiple fields, side effects not in the return value).
+
+### Non-golden assertions with `trial`
+
+If `Expected` is not a single comparable value, use a small result struct, return `error` from `testFn`, or use `ExpectedErr`. Do not default to `t.Run`, extended input structs, or helpers because the assertion is not a golden string — and do not use those when golden **would** work.
 
 ### Test config types — placement hierarchy
 
@@ -99,6 +140,19 @@ Declare **minimal interfaces** beside test helpers or production consumers so fa
 ## Unexported helpers
 
 Default: validate through exported APIs. Reach `package foo` internals from `foo_test.go` only when it genuinely reduces brittle surface—accept some duplication over testing every helper. Do not create a `.go` file solely to isolate an unexported helper for testing.
+
+**Test-only helpers** (`assertXxx(t, …)`, `preserveKey`-style flags) that exist for one table are a smell — fold the case into `Expected` or delete the helper.
+
+## Anti-patterns
+
+Do **not**:
+
+- Add nested `t.Run` + manual case loops when `trial` is already used in the same `Test…`
+- Mix `trial.SubTest(t)` with extra `t.Run` blocks or post-table assertions in the same `Test…`
+- Introduce package-level or free assert helpers used by a single test
+- Add richer input structs where every case shares the same shape except optional assertion flags
+- Re-implement in `testFn` checks that golden `Expected` already covers
+- Invent round-trip / re-parse validation when a golden output string fails on the bug
 
 ## Parallelism
 

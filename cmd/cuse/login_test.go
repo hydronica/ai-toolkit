@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -122,10 +124,101 @@ func TestWaitForLoginCookieBrowserClosed(t *testing.T) {
 	cancel(ErrLoginBrowserClosed)
 	_, err := waitForLoginCookie(ctx, func(context.Context) (string, error) {
 		return "", nil
-	})
+	}, nil)
 	if !errors.Is(err, ErrLoginBrowserClosed) {
 		t.Fatalf("got %v want ErrLoginBrowserClosed", err)
 	}
+}
+
+func TestFirefoxSessionIgnoresLauncherExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses shell script")
+	}
+
+	script := filepath.Join(t.TempDir(), "fake-firefox.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := newFirefoxSession(context.Background(), script, nil)
+	if err != nil {
+		t.Fatalf("newFirefoxSession: %v", err)
+	}
+	defer session.Close()
+
+	deadline := time.Now().Add(time.Second)
+	for session.ctx.Err() == nil && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if session.ctx.Err() != nil {
+		t.Fatalf("context cancelled on launcher exit: %v", context.Cause(session.ctx))
+	}
+}
+
+func TestWaitForLoginCookieIgnoresStale(t *testing.T) {
+	stale := "old-session-token"
+	calls := 0
+	ctx := context.Background()
+	got, err := waitForLoginCookie(ctx, func(context.Context) (string, error) {
+		calls++
+		if calls < 2 {
+			return stale, nil
+		}
+		return "fresh-session-token", nil
+	}, []string{stale})
+	if err != nil {
+		t.Fatalf("waitForLoginCookie: %v", err)
+	}
+	if got != "fresh-session-token" {
+		t.Fatalf("got %q want fresh-session-token", got)
+	}
+	if calls != 2 {
+		t.Fatalf("readCookie calls = %d want 2", calls)
+	}
+}
+
+func TestAppendRejectCookie(t *testing.T) {
+	fn := func(in struct {
+		reject []string
+		cookie string
+	}) ([]string, error) {
+		return appendRejectCookie(in.reject, in.cookie), nil
+	}
+	cases := trial.Cases[struct {
+		reject []string
+		cookie string
+	}, []string]{
+		"adds token without prefix": {
+			Input: struct {
+				reject []string
+				cookie string
+			}{
+				cookie: "WorkosCursorSessionToken=abc123",
+			},
+			Expected: []string{"abc123"},
+		},
+		"deduplicates": {
+			Input: struct {
+				reject []string
+				cookie string
+			}{
+				reject: []string{"abc123"},
+				cookie: "abc123",
+			},
+			Expected: []string{"abc123"},
+		},
+		"skips empty": {
+			Input: struct {
+				reject []string
+				cookie string
+			}{
+				reject: []string{"keep"},
+				cookie: "",
+			},
+			Expected: []string{"keep"},
+		},
+	}
+	trial.New(fn, cases).SubTest(t)
 }
 
 func TestIsChromiumSessionLost(t *testing.T) {

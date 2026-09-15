@@ -15,7 +15,7 @@ Usage: uninstall.sh [--purge-project-rules]
   -h, --help             Show this help
 
 Removes ${HOME}/.cursor/(commands|skills|agents)/ai-toolkit
-Removes ${HOME}/.cursor/ai-toolkit (scripts, rules-source, projects.registry)
+Removes ${HOME}/.cursor/ai-toolkit (scripts, rules-source, projects.registry, install-manifest.json)
 
 By default, project-level rules under .cursor/rules/ai-toolkit/ are left in place.
 Link-mode projects will have dangling symlinks after uninstall unless you purge first.
