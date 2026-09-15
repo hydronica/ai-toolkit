@@ -44,6 +44,7 @@ func run() error {
 	}
 
 	cookie := os.Getenv("CURSOR_COOKIE")
+	var rejectCookies []string
 
 	// First attempt: try with whatever cookie we have (may be empty).
 	if cookie != "" {
@@ -55,13 +56,14 @@ func run() error {
 		if !errors.Is(err, ErrAuthFailed) {
 			return err
 		}
+		rejectCookies = appendRejectCookie(rejectCookies, cookie)
 		fmt.Fprintln(os.Stderr, "Cookie expired or invalid — starting browser login...")
 	} else {
 		fmt.Fprintln(os.Stderr, "No cookie found — starting browser login...")
 	}
 
 	// Fall through to browser login.
-	session, err := runLogin(ctx, *browser)
+	session, err := runLogin(ctx, *browser, rejectCookies)
 	if err != nil {
 		return fmt.Errorf("login: %w", err)
 	}
@@ -134,44 +136,42 @@ func (r *UsageResult) writeHeader(b *strings.Builder, hasPeriod bool, remaining 
 }
 
 func (r *UsageResult) writeUsageSection(b *strings.Builder) {
-	teamLimit := r.LimitType == "team" && r.RequestsLimit > 0
-	showPlanLines := r.LimitType != "team"
-	showRequestLines := r.RequestsLimit > 0 || r.RequestsRemaining != nil
-	if !showPlanLines && !showRequestLines {
-		return
-	}
-
-	fmt.Fprintln(b, "Total usage:")
-
-	if showPlanLines {
+	switch r.UsageKind {
+	case usageKindPlan:
+		fmt.Fprintln(b, "Total usage:")
 		fmt.Fprintf(b, "  API (named):   %.1f%%\n", r.APIPercent)
 		fmt.Fprintf(b, "  Auto:          %.1f%%\n", r.AutoPercent)
-	}
-	if r.RequestsLimit > 0 {
-		used := r.requestUsed()
-		pct := requestPercent(used, r.RequestsLimit)
-		if teamLimit {
-			fmt.Fprintf(b, "  Spent:         %s of %s (%.1f%%)\n",
-				formatDollars(used), formatDollars(r.RequestsLimit), pct)
-		} else {
+		if r.RequestsLimit > 0 {
+			used := r.requestUsed()
+			pct := requestPercent(used, r.RequestsLimit)
 			fmt.Fprintf(b, "  Requests:      %.1f%% (%.0f/%.0f)\n", pct, used, r.RequestsLimit)
 		}
-	}
-	if r.RequestsRemaining != nil && !teamLimit {
-		fmt.Fprintf(b, "  Remaining:     %.0f\n", *r.RequestsRemaining)
+		if r.RequestsRemaining != nil {
+			fmt.Fprintf(b, "  Remaining:     %.0f\n", *r.RequestsRemaining)
+		}
+	case usageKindOverall:
+		if r.RequestsLimit <= 0 {
+			return
+		}
+		used := r.requestUsed()
+		pct := requestPercent(used, r.RequestsLimit)
+		fmt.Fprintln(b, "Total usage:")
+		fmt.Fprintf(b, "  Spent:         %s of %s (%.1f%%)\n",
+			formatDollars(used), formatDollars(r.RequestsLimit), pct)
 	}
 }
 
 func (r *UsageResult) writeSpendSection(b *strings.Builder) {
-	if r.LimitType != "team" {
+	showIndividual := r.UsageKind != usageKindOverall
+	if showIndividual {
 		r.writeIndividualOnDemand(b)
 	}
 	if r.Team != nil && r.Team.Enabled {
-		if r.LimitType != "team" {
+		if showIndividual {
 			b.WriteString("\n")
 		}
 		heading := "Team on-demand:"
-		if r.LimitType != "team" {
+		if showIndividual {
 			heading = "Team usage:"
 		}
 		r.Team.writeSpend(b, heading)

@@ -136,6 +136,15 @@ func chromiumInstallPaths() []string {
 	}
 }
 
+// quitFirefoxLogin stops the Firefox launcher started for login. The real browser
+// process may have detached (especially on macOS); killing the launcher is best-effort.
+func quitFirefoxLogin(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+}
+
 // openFirefox launches a dedicated Firefox instance for login (-no-remote).
 // GPU acceleration is disabled by default.
 func openFirefox(firefoxPath, url string) (*exec.Cmd, error) {
