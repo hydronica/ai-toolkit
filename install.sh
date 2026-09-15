@@ -59,6 +59,95 @@ die() {
   exit 1
 }
 
+# Resolve symlinks; print absolute physical path (dest need not exist).
+canonical_path() {
+  local path="$1" dir base target
+  [[ -n "${path}" ]] || return 1
+  path="${path%/}"
+  while [[ -L "${path}" ]]; do
+    target="$(readlink "${path}")"
+    if [[ "${target}" == /* ]]; then
+      path="${target}"
+    else
+      dir="$(cd "$(dirname "${path}")" 2>/dev/null && pwd -P)" || return 1
+      path="${dir}/${target}"
+    fi
+  done
+  if [[ -d "${path}" ]]; then
+    cd "${path}" && pwd -P
+    return 0
+  fi
+  dir="$(cd "$(dirname "${path}")" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "${dir}" "$(basename "${path}")"
+}
+
+paths_same() {
+  local a="$1" b="$2" canon_a canon_b
+  canon_a="$(canonical_path "${a}")" || return 1
+  canon_b="$(canonical_path "${b}")" || return 1
+  [[ "${canon_a}" == "${canon_b}" ]]
+}
+
+safe_symlink() {
+  local src="$1" dest="$2"
+  [[ -n "${src}" && -n "${dest}" ]] || die "safe_symlink: missing path"
+  if paths_same "${src}" "${dest}" 2>/dev/null; then
+    echo "Warning: skipping self-symlink at ${dest}" >&2
+    return 0
+  fi
+  ln -s "${src}" "${dest}"
+}
+
+cleanup_legacy_self_symlinks() {
+  local dir="$1" name path target
+  for name in cuse db-query projects.registry; do
+    path="${dir}/${name}"
+    [[ -L "${path}" ]] || continue
+    target="$(readlink "${path}")"
+    if [[ "${target}" == "${name}" ]] || paths_same "${path}" "${dir}/${target}" 2>/dev/null; then
+      rm -f "${path}"
+    fi
+  done
+}
+
+# Older installers symlinked ~/.cursor/ai-toolkit -> <repo>/scripts. Flattened
+# installs need a real directory; migrate preserved state out of scripts/ first.
+migrate_legacy_bin_target() {
+  local legacy_link legacy_dir base path tmp
+  [[ -L "${BIN_TARGET}" ]] || return 0
+
+  legacy_link="$(readlink "${BIN_TARGET}")"
+  if [[ "${legacy_link}" != /* ]]; then
+    legacy_dir="$(cd "$(dirname "${BIN_TARGET}")" && pwd -P)"
+    legacy_link="${legacy_dir}/${legacy_link}"
+  fi
+
+  echo "Migrating legacy install: ${BIN_TARGET} pointed at scripts/; converting to a real directory."
+
+  cleanup_legacy_self_symlinks "${legacy_link}"
+
+  tmp="$(mktemp -d)"
+  for base in projects.registry install-manifest.json rules-source .env; do
+    path="${legacy_link}/${base}"
+    [[ -e "${path}" || -L "${path}" ]] || continue
+    mv "${path}" "${tmp}/${base}" 2>/dev/null || cp -a "${path}" "${tmp}/${base}"
+    rm -rf "${path}"
+  done
+
+  rm "${BIN_TARGET}"
+  mkdir -p "${BIN_TARGET}"
+
+  for base in projects.registry install-manifest.json rules-source .env; do
+    [[ -e "${tmp}/${base}" ]] || continue
+    mv "${tmp}/${base}" "${BIN_TARGET}/${base}"
+  done
+  rm -rf "${tmp}"
+}
+
+bin_target_needs_migration() {
+  [[ -L "${BIN_TARGET}" ]]
+}
+
 require_command() {
   local cmd="$1"
   command -v "${cmd}" >/dev/null 2>&1 || die "Missing required command: ${cmd}"
@@ -175,7 +264,7 @@ install_resource() {
   rm -rf "${target}"
 
   if [[ "${mode}" == "link" ]]; then
-    ln -s "${source_root}/${resource}" "${target}"
+    safe_symlink "${source_root}/${resource}" "${target}"
   else
     cp -R "${source_root}/${resource}" "${target}"
   fi
@@ -189,6 +278,7 @@ install_bin() {
 
   # Managed artifacts: entries from scripts/ (except Go binaries, handled by ensure_binaries).
   # Preserved state: projects.registry, .env, rules-source/, install-manifest.json, binaries.
+  migrate_legacy_bin_target
   mkdir -p "${BIN_TARGET}"
 
   for entry in "${source_root}/${BIN_SOURCE_DIR}"/*; do
@@ -196,7 +286,7 @@ install_bin() {
     base="$(basename "${entry}")"
 
     case "${base}" in
-      cuse|db-query) continue ;;
+      cuse|db-query|projects.registry|install-manifest.json|rules-source) continue ;;
     esac
     if [[ "${base}" == ".env" && -f "${BIN_TARGET}/.env" ]]; then
       continue
@@ -206,7 +296,7 @@ install_bin() {
     rm -rf "${BIN_TARGET}/${base}"
 
     if [[ "${mode}" == "link" ]]; then
-      ln -s "${entry}" "${BIN_TARGET}/${base}"
+      safe_symlink "${entry}" "${BIN_TARGET}/${base}"
     elif [[ -d "${entry}" ]]; then
       cp -R "${entry}" "${BIN_TARGET}/${base}"
     else
@@ -241,7 +331,7 @@ install_rules_source() {
   rm -rf "${RULES_TARGET}"
 
   if [[ "${mode}" == "link" ]]; then
-    ln -s "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
+    safe_symlink "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
   else
     cp -R "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
   fi
@@ -367,8 +457,17 @@ source_identity() {
 }
 
 link_target_matches() {
-  local path="$1" expected="$2"
-  [[ -L "${path}" ]] && [[ "$(readlink "${path}")" == "${expected}" ]]
+  local path="$1" expected="$2" target link_path
+  [[ -L "${path}" ]] || return 1
+  target="$(readlink "${path}")"
+  [[ "${target}" == "${expected}" ]] && return 0
+  link_path="${path}"
+  if [[ "${target}" != /* ]]; then
+    link_path="$(cd "$(dirname "${path}")" && pwd -P)/${target}"
+  else
+    link_path="${target}"
+  fi
+  paths_same "${link_path}" "${expected}" 2>/dev/null
 }
 
 copy_target_present() {
@@ -398,6 +497,9 @@ managed_script_entry_needs_repair() {
 assets_need_repair() {
   local source_root="$1" mode="$2"
   local resource target expected entry
+  if bin_target_needs_migration; then
+    return 0
+  fi
   for resource in "${RESOURCE_TYPES[@]}"; do
     target="${HOME}/.cursor/${resource}/${REPO_NAME}"
     if [[ "${mode}" == "link" ]]; then
@@ -483,7 +585,7 @@ repair_managed_binaries() {
       continue
     fi
     rm -f "${dest}"
-    ln -s "${src}" "${dest}"
+    safe_symlink "${src}" "${dest}"
   done
 }
 
@@ -708,7 +810,7 @@ install_managed_binaries() {
     [[ -f "${src}" ]] || die "Built binary missing: ${src}"
     rm -f "${dest}"
     if [[ "${mode}" == "link" ]]; then
-      ln -s "${src}" "${dest}"
+      safe_symlink "${src}" "${dest}"
     else
       cp "${src}" "${dest}"
       chmod +x "${dest}"
