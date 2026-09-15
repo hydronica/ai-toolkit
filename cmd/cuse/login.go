@@ -54,11 +54,12 @@ const (
 // loginSession owns a dedicated browser opened for cursor.com login.
 // Call WaitForCookie, persist the cookie, then Close.
 type loginSession struct {
-	ctx        context.Context
-	cancel     context.CancelCauseFunc
-	closeOnce  sync.Once
-	closeFn    func()
-	readCookie func(context.Context) (string, error)
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	closeOnce     sync.Once
+	closeFn       func()
+	readCookie    func(context.Context) (string, error)
+	rejectCookies []string
 }
 
 // Close shuts down the browser instance this session opened.
@@ -71,8 +72,10 @@ func (s *loginSession) Close() {
 }
 
 // WaitForCookie polls until WorkosCursorSessionToken appears or the session ends.
+// Cookies in rejectCookies (including the profile baseline for Firefox) are ignored
+// so a stale token does not end login before sign-in completes.
 func (s *loginSession) WaitForCookie() (string, error) {
-	return waitForLoginCookie(s.ctx, s.readCookie)
+	return waitForLoginCookie(s.ctx, s.readCookie, s.rejectCookies)
 }
 
 // runLogin opens the system browser for cursor.com login and returns a session.
@@ -80,7 +83,8 @@ func (s *loginSession) WaitForCookie() (string, error) {
 //
 // preferred is the -browser flag value ("firefox" or "chromium"/"chrome").
 // When empty, Firefox is used if installed, otherwise Chromium, otherwise error.
-func runLogin(ctx context.Context, preferred string) (*loginSession, error) {
+// rejectCookies lists session tokens to ignore (for example a cookie that already failed auth).
+func runLogin(ctx context.Context, preferred string, rejectCookies []string) (*loginSession, error) {
 	browser, err := resolveLoginBrowser(preferred)
 	if err != nil {
 		return nil, err
@@ -97,9 +101,9 @@ func runLogin(ctx context.Context, preferred string) (*loginSession, error) {
 
 	switch browser.engine {
 	case loginEngineFirefox:
-		return newFirefoxSession(ctx, browser.path)
+		return newFirefoxSession(ctx, browser.path, rejectCookies)
 	case loginEngineChromium:
-		return newChromiumSession(ctx, browser.path)
+		return newChromiumSession(ctx, browser.path, rejectCookies)
 	default:
 		return nil, fmt.Errorf("unsupported login browser %q", browser.engine)
 	}
@@ -136,7 +140,7 @@ func resolveLoginBrowser(preferred string) (loginBrowser, error) {
 	return loginBrowser{}, fmt.Errorf("no browser found for login (install Firefox or a Chromium-based browser)")
 }
 
-func newFirefoxSession(parent context.Context, firefoxPath string) (*loginSession, error) {
+func newFirefoxSession(parent context.Context, firefoxPath string, rejectCookies []string) (*loginSession, error) {
 	loginCtx, cancel := context.WithCancelCause(parent)
 
 	cmd, err := openFirefox(firefoxPath, loginURL)
@@ -145,27 +149,36 @@ func newFirefoxSession(parent context.Context, firefoxPath string) (*loginSessio
 		return nil, fmt.Errorf("opening browser: %w", err)
 	}
 
+	// Firefox reads cookies from the user's existing profile. Capture the current
+	// token so WaitForCookie waits for a fresh login instead of reusing a stale one.
+	if cookiesPath, err := firefoxCookiesPath(); err == nil {
+		if baseline, err := readFirefoxCookie(cookiesPath); err == nil {
+			rejectCookies = appendRejectCookie(rejectCookies, baseline)
+		}
+	}
+
+	// The launcher process often exits immediately after spawning the real browser
+	// (common on macOS). Do not treat launcher exit as the user closing the window;
+	// login completes when a fresh cookie appears, times out, or the user presses Ctrl-C.
 	exited := make(chan struct{})
 	go func() {
 		defer close(exited)
 		_ = cmd.Wait()
-		cancel(ErrLoginBrowserClosed)
 	}()
 
 	var shutdown sync.Once
 	closeFn := func() {
 		shutdown.Do(func() {
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
+			quitFirefoxLogin(cmd)
 			<-exited
 		})
 	}
 
 	return &loginSession{
-		ctx:    loginCtx,
-		cancel: cancel,
-		closeFn: closeFn,
+		ctx:           loginCtx,
+		cancel:        cancel,
+		closeFn:       closeFn,
+		rejectCookies: rejectCookies,
 		readCookie: func(context.Context) (string, error) {
 			cookiesPath, err := firefoxCookiesPath()
 			if err != nil {
@@ -180,7 +193,7 @@ func newFirefoxSession(parent context.Context, firefoxPath string) (*loginSessio
 	}, nil
 }
 
-func newChromiumSession(parent context.Context, browserPath string) (*loginSession, error) {
+func newChromiumSession(parent context.Context, browserPath string, rejectCookies []string) (*loginSession, error) {
 	loginCtx, cancel := context.WithCancelCause(parent)
 
 	// Build allocator options from scratch rather than inheriting
@@ -209,9 +222,10 @@ func newChromiumSession(parent context.Context, browserPath string) (*loginSessi
 	wireChromiumCloseSignals(taskCtx, cancel)
 
 	return &loginSession{
-		ctx:     loginCtx,
-		cancel:  cancel,
-		closeFn: closeFn,
+		ctx:           loginCtx,
+		cancel:        cancel,
+		closeFn:       closeFn,
+		rejectCookies: rejectCookies,
 		readCookie: func(context.Context) (string, error) {
 			cookie, err := extractChromiumCookie(taskCtx)
 			if err != nil && isChromiumSessionLost(err) {
@@ -222,7 +236,7 @@ func newChromiumSession(parent context.Context, browserPath string) (*loginSessi
 	}, nil
 }
 
-func waitForLoginCookie(ctx context.Context, readCookie func(context.Context) (string, error)) (string, error) {
+func waitForLoginCookie(ctx context.Context, readCookie func(context.Context) (string, error), rejectCookies []string) (string, error) {
 	deadline := time.Now().Add(loginTimeout)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -239,7 +253,7 @@ func waitForLoginCookie(ctx context.Context, readCookie func(context.Context) (s
 		if err != nil {
 			return "", err
 		}
-		if cookie != "" {
+		if cookie != "" && !isRejectedLoginCookie(cookie, rejectCookies) {
 			return cookie, nil
 		}
 
@@ -386,4 +400,37 @@ func chromiumGPUInitFlags() map[string]any {
 		flags["disable-features"] = "Vulkan"
 	}
 	return flags
+}
+
+// cookieTokenValue returns the raw session token without the cookie name prefix.
+func cookieTokenValue(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.Trim(v, "\r")
+	return strings.TrimPrefix(v, "WorkosCursorSessionToken=")
+}
+
+func appendRejectCookie(reject []string, cookie string) []string {
+	token := cookieTokenValue(cookie)
+	if token == "" {
+		return reject
+	}
+	for _, existing := range reject {
+		if existing == token {
+			return reject
+		}
+	}
+	return append(reject, token)
+}
+
+func isRejectedLoginCookie(value string, reject []string) bool {
+	token := cookieTokenValue(value)
+	if token == "" {
+		return true
+	}
+	for _, r := range reject {
+		if r == token {
+			return true
+		}
+	}
+	return false
 }
