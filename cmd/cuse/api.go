@@ -21,12 +21,23 @@ const (
 	userAgent = "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0"
 )
 
+// UsageKind identifies which individualUsage block drove the result.
+// Format uses this instead of LimitType to decide plan vs spend display.
+type UsageKind int
+
+const (
+	usageKindNone UsageKind = iota
+	usageKindPlan
+	usageKindOverall
+)
+
 // UsageResult holds the billing data we show to the user.
 type UsageResult struct {
 	PeriodStart            time.Time
 	PeriodEnd              time.Time
 	MembershipType         string
-	LimitType              string // "team" for team-limit enterprise accounts
+	LimitType              string // "team" for team-limit enterprise accounts (label only)
+	UsageKind              UsageKind
 	TotalPercent           float64
 	AutoPercent            float64
 	APIPercent             float64
@@ -243,6 +254,7 @@ func hasPlanUsage(p planUsage) bool {
 }
 
 func applyPlanUsage(result *UsageResult, iu individualUsage) {
+	result.UsageKind = usageKindPlan
 	result.TotalPercent = iu.Plan.TotalPercentUsed
 	result.AutoPercent = iu.Plan.AutoPercentUsed
 	result.APIPercent = iu.Plan.APIPercentUsed
@@ -257,6 +269,7 @@ func applyPlanUsage(result *UsageResult, iu individualUsage) {
 }
 
 func applyOverallUsage(result *UsageResult, info TeamUsageInfo) {
+	result.UsageKind = usageKindOverall
 	result.RequestsUsed = info.Used
 	if info.Limit != nil {
 		result.RequestsLimit = *info.Limit

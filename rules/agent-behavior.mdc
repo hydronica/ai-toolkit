@@ -11,3 +11,13 @@ Installed rules **override surrounding code**. Match local style only where rule
 ## Ambiguity
 
 If scope, API, naming, semantics, or approach is unclear — **ask the user**; do not guess or default to existing code or the smallest change.
+
+## Bug fixes and test edits
+
+When a task is a **bug fix**, adds **regression tests**, lists **Fix Focus Areas** that include `*_test.go`, or a suggested-fix prompt mentions tests:
+
+1. **Read `go-testing.mdc`** before writing or changing tests (even if you start on production `.go` files).
+2. **Read existing `Test…` functions** in the target `*_test.go` and extend the current harness — usually a new **`trial` row** with golden `Expected`.
+3. Do **not** add nested `t.Run` loops, test helpers, or extended input structs when golden `Expected` catches the bug.
+
+Suggested-fix / agent prompts should include `@go-testing.mdc` (or list the test file in Fix Focus Areas) so this rule loads; production-only globs are not enough on their own.

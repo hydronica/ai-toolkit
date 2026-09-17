@@ -3,7 +3,6 @@
 set -euo pipefail
 
 readonly REPO_NAME="ai-toolkit"
-readonly REMOTE_TARBALL_URL="https://codeload.github.com/hydronica/ai-toolkit/tar.gz/refs/heads/main"
 readonly RESOURCE_TYPES=("commands" "skills" "agents")
 readonly BIN_SOURCE_DIR="scripts"
 readonly RULES_DIR="rules"
@@ -12,9 +11,11 @@ readonly RULES_TARGET="${BIN_TARGET}/rules-source"
 readonly REGISTRY_FILE="${BIN_TARGET}/projects.registry"
 readonly GITHUB_REPO="hydronica/ai-toolkit"
 readonly GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-readonly GITHUB_MAIN_API="https://api.github.com/repos/${GITHUB_REPO}/commits/main"
 readonly INSTALL_MANIFEST="${BIN_TARGET}/install-manifest.json"
+ONLINE_RELEASE_TAG=""
+ONLINE_RELEASE_COMMIT=""
 readonly MANAGED_BINARIES=("cuse" "db-query")
+readonly LOCAL_BINARY_PATHS=("cmd/cuse" "cmd/db-query" "Makefile")
 
 # Set by plan_install: skip | install | repair
 PLAN_ASSETS_ACTION=""
@@ -56,6 +57,95 @@ EOF
 die() {
   echo "Error: $*" >&2
   exit 1
+}
+
+# Resolve symlinks; print absolute physical path (dest need not exist).
+canonical_path() {
+  local path="$1" dir base target
+  [[ -n "${path}" ]] || return 1
+  path="${path%/}"
+  while [[ -L "${path}" ]]; do
+    target="$(readlink "${path}")"
+    if [[ "${target}" == /* ]]; then
+      path="${target}"
+    else
+      dir="$(cd "$(dirname "${path}")" 2>/dev/null && pwd -P)" || return 1
+      path="${dir}/${target}"
+    fi
+  done
+  if [[ -d "${path}" ]]; then
+    cd "${path}" && pwd -P
+    return 0
+  fi
+  dir="$(cd "$(dirname "${path}")" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "${dir}" "$(basename "${path}")"
+}
+
+paths_same() {
+  local a="$1" b="$2" canon_a canon_b
+  canon_a="$(canonical_path "${a}")" || return 1
+  canon_b="$(canonical_path "${b}")" || return 1
+  [[ "${canon_a}" == "${canon_b}" ]]
+}
+
+safe_symlink() {
+  local src="$1" dest="$2"
+  [[ -n "${src}" && -n "${dest}" ]] || die "safe_symlink: missing path"
+  if paths_same "${src}" "${dest}" 2>/dev/null; then
+    echo "Warning: skipping self-symlink at ${dest}" >&2
+    return 0
+  fi
+  ln -s "${src}" "${dest}"
+}
+
+cleanup_legacy_self_symlinks() {
+  local dir="$1" name path target
+  for name in cuse db-query projects.registry; do
+    path="${dir}/${name}"
+    [[ -L "${path}" ]] || continue
+    target="$(readlink "${path}")"
+    if [[ "${target}" == "${name}" ]] || paths_same "${path}" "${dir}/${target}" 2>/dev/null; then
+      rm -f "${path}"
+    fi
+  done
+}
+
+# Older installers symlinked ~/.cursor/ai-toolkit -> <repo>/scripts. Flattened
+# installs need a real directory; migrate preserved state out of scripts/ first.
+migrate_legacy_bin_target() {
+  local legacy_link legacy_dir base path tmp
+  [[ -L "${BIN_TARGET}" ]] || return 0
+
+  legacy_link="$(readlink "${BIN_TARGET}")"
+  if [[ "${legacy_link}" != /* ]]; then
+    legacy_dir="$(cd "$(dirname "${BIN_TARGET}")" && pwd -P)"
+    legacy_link="${legacy_dir}/${legacy_link}"
+  fi
+
+  echo "Migrating legacy install: ${BIN_TARGET} pointed at scripts/; converting to a real directory."
+
+  cleanup_legacy_self_symlinks "${legacy_link}"
+
+  tmp="$(mktemp -d)"
+  for base in projects.registry install-manifest.json rules-source .env; do
+    path="${legacy_link}/${base}"
+    [[ -e "${path}" || -L "${path}" ]] || continue
+    mv "${path}" "${tmp}/${base}" 2>/dev/null || cp -a "${path}" "${tmp}/${base}"
+    rm -rf "${path}"
+  done
+
+  rm "${BIN_TARGET}"
+  mkdir -p "${BIN_TARGET}"
+
+  for base in projects.registry install-manifest.json rules-source .env; do
+    [[ -e "${tmp}/${base}" ]] || continue
+    mv "${tmp}/${base}" "${BIN_TARGET}/${base}"
+  done
+  rm -rf "${tmp}"
+}
+
+bin_target_needs_migration() {
+  [[ -L "${BIN_TARGET}" ]]
 }
 
 require_command() {
@@ -105,20 +195,62 @@ validate_source_root() {
   [[ -d "${source_root}/${RULES_DIR}" ]] || die "Source missing directory: ${RULES_DIR}"
 }
 
+remote_tarball_url() {
+  local commit="$1"
+  [[ -n "${commit}" ]] || die "Remote tarball URL requires commit SHA"
+  printf 'https://codeload.github.com/%s/tar.gz/%s' "${GITHUB_REPO}" "${commit}"
+}
+
+fetch_commit_for_ref() {
+  local ref="$1" sha response
+  require_command curl
+  response="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/commits/${ref}")" \
+    || die "Failed to resolve commit for ref: ${ref}"
+  if jq_available; then
+    sha="$(printf '%s' "${response}" | jq -er '.sha' 2>/dev/null || true)"
+  else
+    sha="$(printf '%s' "${response}" | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/')"
+  fi
+  [[ -n "${sha}" ]] || die "Failed to resolve commit for ref: ${ref}"
+  echo "${sha}"
+}
+
+ensure_online_release_resolved() {
+  local release_json tag
+  if [[ -n "${ONLINE_RELEASE_COMMIT}" ]]; then
+    return 0
+  fi
+  require_command curl
+  release_json="$(curl -fsSL "${GITHUB_API}")" || die "Failed to fetch release info"
+  tag="$(echo "${release_json}" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+  [[ -n "${tag}" ]] || die "Failed to parse latest release tag"
+  ONLINE_RELEASE_TAG="${tag}"
+  ONLINE_RELEASE_COMMIT="$(fetch_commit_for_ref "${tag}")"
+}
+
+local_is_at_or_ahead_of_release() {
+  local source_root="$1" release_commit="$2"
+  local local_sha
+  local_sha="$(git -C "${source_root}" rev-parse HEAD)"
+  git -C "${source_root}" merge-base --is-ancestor "${release_commit}" "${local_sha}" 2>/dev/null
+}
+
 fetch_remote_source_root() {
+  local commit="$1"
   require_command curl
   require_command tar
+  [[ -n "${commit}" ]] || die "Remote fetch requires commit SHA"
 
-  local tmpdir archive
+  local tmpdir archive tarball_url extracted_root
   tmpdir="$(mktemp -d)"
   archive="${tmpdir}/repo.tar.gz"
+  tarball_url="$(remote_tarball_url "${commit}")"
 
-  curl -fsSL "${REMOTE_TARBALL_URL}" -o "${archive}" || die "Failed to download remote repository"
+  curl -fsSL "${tarball_url}" -o "${archive}" || die "Failed to download remote repository archive (${commit})"
   tar -xzf "${archive}" -C "${tmpdir}" || die "Failed to extract remote repository archive"
 
-  local extracted_root
-  extracted_root="${tmpdir}/${REPO_NAME}-main"
-  [[ -d "${extracted_root}" ]] || die "Could not locate extracted remote source directory"
+  extracted_root="$(find "${tmpdir}" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  [[ -n "${extracted_root}" && -d "${extracted_root}" ]] || die "Could not locate extracted remote source directory"
   echo "${tmpdir}:${extracted_root}"
 }
 
@@ -132,7 +264,7 @@ install_resource() {
   rm -rf "${target}"
 
   if [[ "${mode}" == "link" ]]; then
-    ln -s "${source_root}/${resource}" "${target}"
+    safe_symlink "${source_root}/${resource}" "${target}"
   else
     cp -R "${source_root}/${resource}" "${target}"
   fi
@@ -146,6 +278,7 @@ install_bin() {
 
   # Managed artifacts: entries from scripts/ (except Go binaries, handled by ensure_binaries).
   # Preserved state: projects.registry, .env, rules-source/, install-manifest.json, binaries.
+  migrate_legacy_bin_target
   mkdir -p "${BIN_TARGET}"
 
   for entry in "${source_root}/${BIN_SOURCE_DIR}"/*; do
@@ -153,7 +286,7 @@ install_bin() {
     base="$(basename "${entry}")"
 
     case "${base}" in
-      cuse|db-query) continue ;;
+      cuse|db-query|projects.registry|install-manifest.json|rules-source) continue ;;
     esac
     if [[ "${base}" == ".env" && -f "${BIN_TARGET}/.env" ]]; then
       continue
@@ -163,7 +296,7 @@ install_bin() {
     rm -rf "${BIN_TARGET}/${base}"
 
     if [[ "${mode}" == "link" ]]; then
-      ln -s "${entry}" "${BIN_TARGET}/${base}"
+      safe_symlink "${entry}" "${BIN_TARGET}/${base}"
     elif [[ -d "${entry}" ]]; then
       cp -R "${entry}" "${BIN_TARGET}/${base}"
     else
@@ -198,7 +331,7 @@ install_rules_source() {
   rm -rf "${RULES_TARGET}"
 
   if [[ "${mode}" == "link" ]]; then
-    ln -s "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
+    safe_symlink "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
   else
     cp -R "${source_root}/${RULES_DIR}" "${RULES_TARGET}"
   fi
@@ -256,7 +389,12 @@ manifest_field() {
   if [[ ! -f "${INSTALL_MANIFEST}" ]] || ! jq_available; then
     return 0
   fi
-  value="$(jq -r --arg f "${field}" 'if type == "object" then .[$f] // empty else empty end' "${INSTALL_MANIFEST}" 2>/dev/null || true)"
+  value="$(jq -r --arg f "${field}" '
+    if type != "object" then empty
+    elif ($f | contains(".")) then (getpath($f | split(".")) // empty)
+    else (.[$f] // empty)
+    end
+  ' "${INSTALL_MANIFEST}" 2>/dev/null || true)"
   if [[ -n "${value}" && "${value}" != "null" ]]; then
     printf '%s\n' "${value}"
   fi
@@ -303,19 +441,6 @@ write_install_manifest() {
   fi
 }
 
-fetch_online_main_commit() {
-  require_command curl
-  local sha response
-  response="$(curl -fsSL "${GITHUB_MAIN_API}")" || die "Failed to resolve main branch commit from GitHub API"
-  if jq_available; then
-    sha="$(printf '%s' "${response}" | jq -er '.sha' 2>/dev/null || true)"
-  else
-    sha="$(printf '%s' "${response}" | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/')"
-  fi
-  [[ -n "${sha}" ]] || die "Failed to resolve main branch commit from GitHub API"
-  echo "${sha}"
-}
-
 source_identity() {
   local source_root="$1" source_kind="$2"
   local commit version
@@ -324,61 +449,128 @@ source_identity() {
     commit="$(git -C "${source_root}" rev-parse HEAD)"
     version="$(git -C "${source_root}" describe --tags --always --dirty)"
   else
-    commit="$(fetch_online_main_commit)"
-    version="main@${commit:0:7}"
+    ensure_online_release_resolved
+    commit="${ONLINE_RELEASE_COMMIT}"
+    version="${ONLINE_RELEASE_TAG}@${commit:0:7}"
   fi
   printf '%s\n%s\n' "${commit}" "${version}"
 }
 
 link_target_matches() {
-  local path="$1" expected="$2"
-  [[ -L "${path}" ]] && [[ "$(readlink "${path}")" == "${expected}" ]]
+  local path="$1" expected="$2" target link_path
+  [[ -L "${path}" ]] || return 1
+  target="$(readlink "${path}")"
+  [[ "${target}" == "${expected}" ]] && return 0
+  link_path="${path}"
+  if [[ "${target}" != /* ]]; then
+    link_path="$(cd "$(dirname "${path}")" && pwd -P)/${target}"
+  else
+    link_path="${target}"
+  fi
+  paths_same "${link_path}" "${expected}" 2>/dev/null
 }
 
-link_targets_need_repair() {
-  local source_root="$1"
-  local resource target expected
-  for resource in "${RESOURCE_TYPES[@]}"; do
-    target="${HOME}/.cursor/${resource}/${REPO_NAME}"
-    expected="${source_root}/${resource}"
-    if ! link_target_matches "${target}" "${expected}"; then
+copy_target_present() {
+  local path="$1"
+  [[ -e "${path}" ]] && [[ ! -L "${path}" ]]
+}
+
+managed_script_entry_needs_repair() {
+  local source_root="$1" mode="$2" entry="$3"
+  local base="${entry##*/}"
+  case "${base}" in
+    cuse|db-query) return 1 ;;
+  esac
+  if [[ "${base}" == ".env" && -f "${BIN_TARGET}/.env" ]]; then
+    return 1
+  fi
+  if [[ "${mode}" == "link" ]]; then
+    if ! link_target_matches "${BIN_TARGET}/${base}" "${entry}"; then
       return 0
     fi
-  done
-  if ! link_target_matches "${RULES_TARGET}" "${source_root}/${RULES_DIR}"; then
+  elif ! copy_target_present "${BIN_TARGET}/${base}"; then
     return 0
   fi
-  local name expected dest
-  for name in "${MANAGED_BINARIES[@]}"; do
-    dest="${BIN_TARGET}/${name}"
-    expected="${source_root}/${BIN_SOURCE_DIR}/${name}"
-    if ! link_target_matches "${dest}" "${expected}"; then
-      return 0
-    fi
-  done
   return 1
 }
 
-repair_link_assets() {
-  local source_root="$1"
-  local resource target expected entry base
+assets_need_repair() {
+  local source_root="$1" mode="$2"
+  local resource target expected entry
+  if bin_target_needs_migration; then
+    return 0
+  fi
   for resource in "${RESOURCE_TYPES[@]}"; do
     target="${HOME}/.cursor/${resource}/${REPO_NAME}"
-    expected="${source_root}/${resource}"
-    if ! link_target_matches "${target}" "${expected}"; then
-      install_resource "${resource}" "${source_root}" "link"
+    if [[ "${mode}" == "link" ]]; then
+      expected="${source_root}/${resource}"
+      if ! link_target_matches "${target}" "${expected}"; then
+        return 0
+      fi
+    elif ! copy_target_present "${target}"; then
+      return 0
     fi
   done
-  if ! link_target_matches "${RULES_TARGET}" "${source_root}/${RULES_DIR}"; then
-    install_rules_source "${source_root}" "link"
+  if [[ "${mode}" == "link" ]]; then
+    if ! link_target_matches "${RULES_TARGET}" "${source_root}/${RULES_DIR}"; then
+      return 0
+    fi
+  elif ! copy_target_present "${RULES_TARGET}"; then
+    return 0
   fi
-  install_bin "${source_root}" "link"
-  repair_managed_binaries "${source_root}"
+  if [[ "${mode}" == "link" && -n "${source_root}" ]]; then
+    local name expected dest
+    for name in "${MANAGED_BINARIES[@]}"; do
+      dest="${BIN_TARGET}/${name}"
+      expected="${source_root}/${BIN_SOURCE_DIR}/${name}"
+      if ! link_target_matches "${dest}" "${expected}"; then
+        return 0
+      fi
+    done
+  fi
+  if [[ -n "${source_root}" ]]; then
+    for entry in "${source_root}/${BIN_SOURCE_DIR}"/*; do
+      [[ -e "${entry}" ]] || continue
+      if managed_script_entry_needs_repair "${source_root}" "${mode}" "${entry}"; then
+        return 0
+      fi
+    done
+  elif [[ "${mode}" == "copy" && ! -f "${BIN_TARGET}/install-rules.sh" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+repair_assets() {
+  local source_root="$1" mode="$2"
+  local resource target expected entry
+  for resource in "${RESOURCE_TYPES[@]}"; do
+    target="${HOME}/.cursor/${resource}/${REPO_NAME}"
+    if [[ "${mode}" == "link" ]]; then
+      expected="${source_root}/${resource}"
+      if ! link_target_matches "${target}" "${expected}"; then
+        install_resource "${resource}" "${source_root}" "link"
+      fi
+    elif ! copy_target_present "${target}"; then
+      install_resource "${resource}" "${source_root}" "copy"
+    fi
+  done
+  if [[ "${mode}" == "link" ]]; then
+    if ! link_target_matches "${RULES_TARGET}" "${source_root}/${RULES_DIR}"; then
+      install_rules_source "${source_root}" "link"
+    fi
+  elif ! copy_target_present "${RULES_TARGET}"; then
+    install_rules_source "${source_root}" "copy"
+  fi
+  install_bin "${source_root}" "${mode}"
+  if [[ "${mode}" == "link" ]]; then
+    repair_managed_binaries "${source_root}"
+  fi
 }
 
 repair_managed_binaries() {
   local source_root="$1"
-  local name src dest
+  local name src dest version
   for name in "${MANAGED_BINARIES[@]}"; do
     src="${source_root}/${BIN_SOURCE_DIR}/${name}"
     dest="${BIN_TARGET}/${name}"
@@ -386,13 +578,14 @@ repair_managed_binaries() {
       continue
     fi
     if [[ ! -f "${src}" ]] && command -v go >/dev/null 2>&1 && [[ -f "${source_root}/Makefile" ]]; then
-      make -C "${source_root}" "${name}" >/dev/null
+      version="$(local_binary_source_version "${source_root}")"
+      make -C "${source_root}" "${name}" VERSION="${version}" >/dev/null
     fi
     if [[ ! -f "${src}" ]]; then
       continue
     fi
     rm -f "${dest}"
-    ln -s "${src}" "${dest}"
+    safe_symlink "${src}" "${dest}"
   done
 }
 
@@ -418,11 +611,36 @@ versions_match() {
 }
 
 fetch_latest_release_tag() {
-  local release_json tag
-  release_json="$(curl -fsSL "${GITHUB_API}")" || die "Failed to fetch release info"
-  tag="$(echo "${release_json}" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
-  [[ -n "${tag}" ]] || die "Failed to parse latest release tag"
-  echo "${tag}"
+  ensure_online_release_resolved
+  echo "${ONLINE_RELEASE_TAG}"
+}
+
+sha256_hex() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    die "Need shasum or sha256sum to hash local binary source"
+  fi
+}
+
+local_binary_source_version() {
+  local source_root="$1"
+  local base hash
+  base="$(git -C "${source_root}" describe --tags --always)"
+  if git -C "${source_root}" diff --quiet HEAD -- "${LOCAL_BINARY_PATHS[@]}" 2>/dev/null \
+     && git -C "${source_root}" diff --cached --quiet -- "${LOCAL_BINARY_PATHS[@]}" 2>/dev/null; then
+    echo "${base}"
+    return 0
+  fi
+  hash="$(
+    {
+      git -C "${source_root}" diff HEAD -- "${LOCAL_BINARY_PATHS[@]}" 2>/dev/null
+      git -C "${source_root}" diff --cached -- "${LOCAL_BINARY_PATHS[@]}" 2>/dev/null
+    } | sha256_hex | cut -c1-12
+  )"
+  echo "${base}-dirty@${hash}"
 }
 
 binaries_need_update() {
@@ -432,8 +650,8 @@ binaries_need_update() {
     return 0
   fi
   if [[ "${source_kind}" == "local" ]] && command -v go >/dev/null 2>&1 && [[ -f "${source_root}/Makefile" ]]; then
-    local expected dest src
-    expected="$(git -C "${source_root}" describe --tags --always --dirty)"
+    local expected dest src manifest_ver
+    expected="$(local_binary_source_version "${source_root}")"
     for name in "${MANAGED_BINARIES[@]}"; do
       path="${BIN_TARGET}/${name}"
       if [[ ! -x "${path}" ]]; then
@@ -450,7 +668,8 @@ binaries_need_update() {
         return 0
       fi
     done
-    if [[ "$(manifest_field commit)" != "${source_commit}" ]]; then
+    manifest_ver="$(manifest_field "binaries.cuse")"
+    if [[ -n "${manifest_ver}" ]] && ! versions_match "${manifest_ver}" "${expected}"; then
       return 0
     fi
     return 1
@@ -471,16 +690,17 @@ binaries_need_update() {
 
 plan_install() {
   local source_root="$1" source_kind="$2" mode="$3" force="$4" force_sync_rules="$5" no_sync_rules="$6"
-  local identity commit version installed_commit installed_mode installed_source assets_unchanged
+  local identity commit version installed_commit installed_version installed_mode installed_source assets_unchanged
 
   identity="$(source_identity "${source_root}" "${source_kind}")"
   commit="${identity%%$'\n'*}"
   version="${identity#*$'\n'}"
 
   installed_commit="$(manifest_field commit)"
+  installed_version="$(manifest_field version)"
   installed_mode="$(manifest_field mode)"
   installed_source="$(manifest_field source)"
-  PLAN_INSTALLED_VERSION="$(manifest_field version)"
+  PLAN_INSTALLED_VERSION="${installed_version}"
   PLAN_INSTALLED_COMMIT="${installed_commit}"
   PLAN_INSTALLED_MODE="${installed_mode}"
   PLAN_INSTALLED_SOURCE="${installed_source}"
@@ -493,10 +713,14 @@ plan_install() {
     PLAN_ASSETS_ACTION="install"
   elif [[ -z "${installed_commit}" ]]; then
     PLAN_ASSETS_ACTION="install"
-  elif [[ "${installed_commit}" != "${commit}" || "${installed_mode}" != "${mode}" || "${installed_source}" != "${source_kind}" ]]; then
+  elif [[ "${installed_commit}" != "${commit}" || "${installed_mode}" != "${mode}" || "${installed_source}" != "${source_kind}" || ( "${mode}" == "copy" && "${installed_version}" != "${version}" ) ]]; then
     PLAN_ASSETS_ACTION="install"
-  elif [[ "${mode}" == "link" && "${source_kind}" == "local" ]] && link_targets_need_repair "${source_root}"; then
-    PLAN_ASSETS_ACTION="repair"
+  elif assets_need_repair "${source_root}" "${mode}"; then
+    if [[ -z "${source_root}" ]]; then
+      PLAN_ASSETS_ACTION="install"
+    else
+      PLAN_ASSETS_ACTION="repair"
+    fi
   else
     PLAN_ASSETS_ACTION="skip"
   fi
@@ -529,7 +753,7 @@ print_install_plan() {
   echo "  Source:     ${PLAN_SOURCE_COMMIT:0:7} (${PLAN_SOURCE_VERSION}) ${PLAN_MODE} ${PLAN_SOURCE_KIND}"
   case "${PLAN_ASSETS_ACTION}" in
     skip) assets_line="skip (unchanged)" ;;
-    repair) assets_line="repair (fix broken symlinks)" ;;
+    repair) assets_line="repair (fix missing or broken assets)" ;;
     *) assets_line="install" ;;
   esac
   echo "  Assets:     ${assets_line}"
@@ -576,16 +800,17 @@ download_release_binary() {
 
 install_managed_binaries() {
   local source_root="$1" mode="$2"
-  local name src dest
+  local name src dest version
   require_command go
-  make -C "${source_root}" cuse db-query
+  version="$(local_binary_source_version "${source_root}")"
+  make -C "${source_root}" cuse db-query VERSION="${version}"
   for name in "${MANAGED_BINARIES[@]}"; do
     src="${source_root}/${BIN_SOURCE_DIR}/${name}"
     dest="${BIN_TARGET}/${name}"
     [[ -f "${src}" ]] || die "Built binary missing: ${src}"
     rm -f "${dest}"
     if [[ "${mode}" == "link" ]]; then
-      ln -s "${src}" "${dest}"
+      safe_symlink "${src}" "${dest}"
     else
       cp "${src}" "${dest}"
       chmod +x "${dest}"
@@ -629,8 +854,8 @@ install_assets() {
       return 0
       ;;
     repair)
-      echo "Repairing broken link-mode asset symlinks..."
-      repair_link_assets "${source_root}"
+      echo "Repairing missing or broken ${mode}-mode assets..."
+      repair_assets "${source_root}" "${mode}"
       return 0
       ;;
   esac
@@ -839,9 +1064,13 @@ main() {
     no_sync_rules="true"
   fi
 
-  if source_root="$(resolve_local_source_root)"; then
-    source_kind="local"
-    validate_source_root "${source_root}"
+  if local_root="$(resolve_local_source_root)"; then
+    validate_source_root "${local_root}"
+    ensure_online_release_resolved
+    if local_is_at_or_ahead_of_release "${local_root}" "${ONLINE_RELEASE_COMMIT}"; then
+      source_kind="local"
+      source_root="${local_root}"
+    fi
   fi
 
   if [[ -n "${requested_mode}" ]]; then
@@ -864,8 +1093,9 @@ main() {
     exit 0
   fi
 
-  if [[ "${PLAN_ASSETS_ACTION}" == "install" && "${source_kind}" == "online" && -z "${source_root}" ]]; then
-    remote_info="$(fetch_remote_source_root)"
+  if [[ "${PLAN_ASSETS_ACTION}" != "skip" && "${source_kind}" == "online" && -z "${source_root}" ]]; then
+    ensure_online_release_resolved
+    remote_info="$(fetch_remote_source_root "${ONLINE_RELEASE_COMMIT}")"
     temp_root="${remote_info%%:*}"
     source_root="${remote_info#*:}"
     validate_source_root "${source_root}"

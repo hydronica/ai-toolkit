@@ -136,6 +136,7 @@ func TestParseUsageAndOutput(t *testing.T) {
 			Expected: parseUsageOutput{
 				result: &UsageResult{
 					MembershipType:  "enterprise",
+					UsageKind:       usageKindPlan,
 					TotalPercent:    56.2,
 					AutoPercent:     0,
 					APIPercent:      100,
@@ -178,6 +179,7 @@ On-demand:       $2,000.00 spent
 			Expected: parseUsageOutput{
 				result: &UsageResult{
 					MembershipType:  "pro",
+					UsageKind:       usageKindPlan,
 					TotalPercent:    30.4,
 					AutoPercent:     42.5,
 					APIPercent:      18.3,
@@ -225,6 +227,7 @@ On-demand:       Disabled
 			Expected: parseUsageOutput{
 				result: &UsageResult{
 					MembershipType:  "enterprise",
+					UsageKind:       usageKindPlan,
 					TotalPercent:    40,
 					AutoPercent:     10,
 					APIPercent:      25,
@@ -282,6 +285,7 @@ Team usage:      $500.00 spent
 			Expected: parseUsageOutput{
 				result: &UsageResult{
 					MembershipType:         "pro",
+					UsageKind:              usageKindPlan,
 					TotalPercent:           12.24,
 					AutoPercent:            0,
 					APIPercent:             53.02,
@@ -304,6 +308,55 @@ On-demand:       Disabled
 `,
 			},
 		},
+		"team_breakdown": {
+			Input: `{
+				"membershipType": "enterprise",
+				"limitType":"team", 
+				"individualUsage": {
+					"plan": {
+						"autoPercentUsed": 0,
+						"apiPercentUsed": 2.8,
+						"used": 224,
+						"limit": 2000,
+						"remaining": 1776,
+						"breakdown": {
+							"included": 2000,
+							"bonus": 0,
+							"total": 224
+						},
+						"enabled":true,
+						"totalPercentUsed": 2.8
+					},
+					"onDemand": {"enabled": false, "used": 0, "remaining":null, "limit":null}
+				}
+			}`,
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					MembershipType:         "enterprise",
+					LimitType:              "team",
+					UsageKind:              usageKindPlan,
+					TotalPercent:           2.8,
+					AutoPercent:            0,
+					APIPercent:             2.8,
+					RequestsUsed:           224,
+					RequestsLimit:          2000,
+					RequestsBreakdownTotal: floatPtr(224.0),
+					OnDemandEnabled:        false,
+				},
+				output: `Cursor usage
+-------------
+Billing period:  — → —
+Plan:            enterprise (team limit)
+Total usage:
+  API (named):   2.8%
+  Auto:          0.0%
+  Requests:      11.2% (224/2000)
+
+On-demand:       Disabled
+
+`,
+			},
+		},
 		"free plan without individual usage": {
 			Input: `{
 				"membershipType": "free",
@@ -317,9 +370,6 @@ On-demand:       Disabled
 -------------
 Billing period:  — → —
 Plan:            free
-Total usage:
-  API (named):   0.0%
-  Auto:          0.0%
 
 On-demand:       Disabled
 
@@ -357,6 +407,7 @@ On-demand:       Disabled
 					PeriodEnd:         time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
 					MembershipType:    "enterprise",
 					LimitType:         "team",
+					UsageKind:         usageKindOverall,
 					AutoPercent:       0,
 					APIPercent:        0,
 					RequestsUsed:      233,

@@ -1,0 +1,29 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [cuse, db-query]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cmd/${{ matrix.module }}/go.mod
+          cache-dependency-path: cmd/${{ matrix.module }}/go.sum
+
+      - name: Run tests
+        run: |
+          if [[ "${{ matrix.module }}" == db-query ]]; then
+            go -C "cmd/${{ matrix.module }}" test -cover -race ./...
+          else
+            go -C "cmd/${{ matrix.module }}" test -cover ./...
+          fi
