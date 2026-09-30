@@ -59,6 +59,15 @@ Do **not** fork parallel test functions for the same API (`TestDecoder_Unmarshal
 
 Behavioral names (`TestReturns422ForDuplicateEmail`) are **exceptions** for integration or cross-cutting cases only — ask if unsure. Not RSpec/Jest-style names for unit tests.
 
+## Optional arguments
+
+Match the production contract (`go-standards.mdc`, **Optional value vs pointer?**):
+
+1. Unset is the zero value → pass `time.Time{}`, `""`, `0`, or an empty slice. Do not pass `*T` or `nil`.
+2. A pointer is required → test `nil` as unset, and a real zero when it must differ from unset.
+3. Name a case for the unset path (e.g. `"zero date omits date clause"`).
+4. Call the exported function, not a wrapper whose only job is `&value`.
+
 ## Table-driven with `trial` (when it adds value)
 
 Use `github.com/hydronica/trial` when the package is already adopted and you have enough independent scenarios to justify a case table. Keep case names descriptive and each case isolated.
@@ -115,6 +124,18 @@ For `trial` cases with `Expected: interface{}`, inline **different** anonymous s
 ### No shared fixture packages
 
 Do **not** create importable packages (e.g. `internal/.../testfixtures`, `nestfixtures`) solely to share struct types across tests. Duplicate small types per `_test.go` or inline in cases. Cross-package duplication is acceptable.
+
+## Comparing expected vs actual
+
+Prefer **trial built-ins** (they use `cmp.Equal` under the hood):
+
+- `trial.Equal` — exact match, including when passed as `Comparer(trial.Equal)`
+- `trial.EqualOpt(trial.IgnoreFields("field"), …)` — skip fields set by the harness or non-deterministic
+- `trial.Contains` — subset / partial match when the full value is unstable
+
+Do **not** use `reflect.DeepEqual` in tests.
+
+Add a custom `Comparer` **only** when trial options and built-ins cannot express the contract (e.g. time windows via `trial.ApproxTime`, ordered slice semantics, domain-specific diff messages). If you reach for `Comparer`, try `EqualOpt` / `Contains` first.
 
 ## Failure style
 
