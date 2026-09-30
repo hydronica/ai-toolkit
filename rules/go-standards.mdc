@@ -34,6 +34,16 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
   - `(*MyError, nil)` in an interface is non-nil.
   - Return literal `nil` when there is no error.
 
+### When ignoring an error is acceptable
+
+Use `_` only when **all** of the following hold:
+
+1. The failure mode is extraordinarily unlikely in practice (e.g. `json.Marshal` on a struct the program just built, `url.ParseQuery` on meta this process encoded).
+2. There is no meaningful recovery path—handling would not change behavior beyond a generic fallback already in place.
+3. Propagating or logging would add noise without actionable signal for operators or callers.
+
+When the choice is non-obvious, add a one-line comment explaining why discard is intentional (e.g. `// meta is written by this service; malformed input falls back to empty values`).
+
 ## Function design essentials
 
 ### Control flow
@@ -51,7 +61,7 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
 
 ### Helpers
 
-- Do **not** add single-line function wrappers—especially around one stdlib call (e.g. `func join(a []string) string { return strings.Join(a, " + ") }`). Inline at the call site.
+- Do **not** add a wrapper for one call, or one that only passes `&value` into a pointer parameter. Inline the call, then follow **New helper?**.
 - Extract a helper when it encapsulates non-trivial logic, is reused in multiple places, or materially clarifies a long/complex function.
 - Prefer naming helpers for **what** they do (`parseVoterRecord`), not for syntactic sugar around a single expression.
 
@@ -105,9 +115,16 @@ Layout: when scaffolding packages, `cmd/`, `internal/`, new binaries, or reorgan
 ### New helper?
 
 1. Single stdlib call or one-liner at one call site → **inline**  
-2. Non-trivial logic duplicated in 3+ places → extract  
-3. Long function where a named block aids reading → extract with real behavior  
-4. Wrapper exists only to rename `strings.Join` / `fmt.Sprintf` / etc. → **do not extract**  
+2. Wrapper that only passes `&value` into a `*T` sibling → **do not extract**. Fix the API per **Optional value vs pointer?**  
+3. Non-trivial logic duplicated in 3+ places → extract  
+4. Long function where a named block aids reading → extract with real behavior  
+5. Wrapper exists only to rename `strings.Join` / `fmt.Sprintf` / etc. → **do not extract**
+
+### Optional value vs pointer?
+
+1. Zero is not a real domain value → value type (`time.Time.IsZero()`, `""`, `0`, empty slice)  
+2. Pointer has a purpose (unset vs real zero, mutate the caller's value, JSON `omitempty`) → pointer  
+3. Otherwise → value  
 
 ## Philosophy (cheat sheet)
 
@@ -159,6 +176,10 @@ for _, path := range paths {
     }()
 }
 ```
+
+### Pointer to copied parameter
+
+`&param` where `param` is a function argument addresses a **copy**. Writing through that pointer does not update the caller's value. If the callee must change the caller's value, the caller passes `*T`.
 
 ### Pointer to range variable
 
