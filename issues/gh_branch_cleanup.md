@@ -15,9 +15,10 @@ Remote branches accumulate after merged PRs, abandoned experiments, and closed-b
 
 1. **Report before delete** — gather data and present a structured audit; never delete silently
 2. **Clear buckets** — keep vs safe-remove vs review (scored 0–100)
-3. **Reuse repo patterns** — mirror `scripts/pr_sum.sh` conventions and the `pr-ready` skill workflow
-4. **Agent-friendly** — human-readable sections plus optional `--json` for structured follow-up
-5. **Safe defaults** — protect default, protected, open-PR, and current-checkout branches
+3. **Remote and local** — default report covers both scopes; `--scope remote|local|both` filters sections
+4. **Reuse repo patterns** — mirror `scripts/pr_sum.sh` conventions and the `pr-ready` skill workflow
+5. **Agent-friendly** — human-readable sections plus optional `--json` for structured follow-up
+6. **Safe defaults** — protect default, protected, open-PR, current-checkout, and worktree-checkout branches
 
 ## Non-goals (initial release)
 
@@ -58,19 +59,29 @@ Installed paths after `install.sh`:
 | Reason | Detection |
 |--------|-----------|
 | Default branch | `gh repo view --json defaultBranchRef` or `git symbolic-ref refs/remotes/{remote}/HEAD` |
-| Protected branch | `gh api repos/{owner}/{repo}/branches/{branch}` → `protection` present |
-| Open PR head | `gh pr list --state open --json headRefName` |
-| Current checkout | `git rev-parse --abbrev-ref HEAD` |
+| Protected branch | `gh api` branches list → `protected: true` |
+| Open PR head | `gh pr list --state open` / PR index `state=OPEN` |
+| Current checkout | `git rev-parse --abbrev-ref HEAD` (local; remote counterpart kept too) |
+| Worktree checkout | `git worktree list --porcelain` → `branch refs/heads/...` |
+| Tracks protected / open-PR remote | Local branch upstream is protected or open-PR head |
 | User keep patterns | `--keep-pattern 'release/*'` (repeatable flag) |
 
 ### Bucket B — Safe to remove (score = 100)
 
 | Reason | Detection |
 |--------|-----------|
-| Merged PR branch | `gh pr list --state merged --json headRefName,mergedAt,number` |
+| Merged PR branch | PR index `mergedAt` present for `headRefName` |
 | Fully merged into default (no PR) | `git merge-base --is-ancestor {branch_sha} {default_sha}` and not in Bucket A |
 
-Note: many repos enable “Delete branch on merge”; Bucket B targets leftovers.
+Note: many repos enable “Delete branch on merge”; Bucket B targets leftovers. Local safe-remove suggestions use `git branch -d`.
+
+### Local vs remote
+
+Classification runs **independently** for remote heads (`refs/remotes/{remote}/`) and local heads (`refs/heads/`). A name can be Keep on one side and Safe remove on the other (for example a merged remote whose local branch is still checked out).
+
+**Linkage** (informational, not a fourth bucket): `paired`, `local-only`, `remote-only`, `gone`, `diverged`.
+
+**Integration base vs delete remote.** Merge/ahead checks prefer `upstream` default when an `upstream` remote exists (fork workflow). Delete suggestions target only the audited remote (default `origin`); never suggest `git push upstream --delete`.
 
 ### Bucket C — Review (score 0–100)
 
@@ -120,11 +131,14 @@ Implement scoring in a single `score_branch()` function for maintainability.
 ```text
 Usage: scripts/branch_sum.sh [options]
 
-  --remote <name>       Remote to audit (default: origin)
+  --remote <name>       Remote to audit for delete suggestions (default: origin)
   --repo <owner/repo>   Override repo slug (default: from remote URL)
-  --base <ref>          Integration base for merged/ahead checks (default: remote default branch)
+  --base <ref>          Integration base for merged/ahead checks
+                        (default: upstream default when upstream exists,
+                        else audited remote default)
   --keep-pattern <glob> Repeatable; branches matching glob are always kept
   --min-score <N>       Only show review branches with score >= N
+  --scope <mode>        remote | local | both (default: both)
   --json                Machine-readable JSON on stdout; suppress human sections
   --no-fetch            Skip git fetch --prune
   -h, --help            Show help
@@ -135,15 +149,15 @@ Usage: scripts/branch_sum.sh [options]
 1. **Prerequisites** — `git`; `gh` + `jq` required for full PR/protected metadata (warn and degrade if missing)
 2. **Repo root** — `git rev-parse --show-toplevel`; `cd` there; `GIT_PAGER=cat`
 3. **Resolve remote / slug** — reuse `parse_repo_slug()` from `pr_sum.sh` pattern
-4. **Fetch** — `git fetch --prune {remote}` unless `--no-fetch`
+4. **Fetch** — `git fetch --prune {remote}` (and integration remote if different) unless `--no-fetch`
 5. **Load metadata**
    - Default branch (gh or symbolic-ref)
-   - Protected branches (gh API; cache per run)
-   - All remote heads: `git ls-remote --heads {remote}` or paginated `gh api`
-   - PR index: `gh pr list --state all --limit 500 --json number,title,state,mergedAt,closedAt,headRefName,author,updatedAt`
+   - Protected branches (paginated branches API; cache per run)
+   - Remote and local heads via `git for-each-ref` (always collected for linkage)
+   - PR index: `gh pr list --state all --limit 500 --json ...` (warn if truncated)
 6. **Per branch** — last commit date, SHA, ahead-of-base count, merged-into-base check, PR association (latest by `updatedAt`)
-7. **Classify** — Bucket A / B / C + score + reason string
-8. **Output** — sections below (or JSON)
+7. **Classify** — Bucket A / B / C + score + reason string (independently for remote and local)
+8. **Output** — sections below (or JSON); `--scope` filters which classification sections print
 
 ### Output sections (human)
 
@@ -152,22 +166,22 @@ Usage: scripts/branch_sum.sh [options]
 Repository, default branch, remote, fetch status, gh auth, branch counts
 
 === Summary ===
-Keep: N | Safe remove: N | Review: N
+Remote — Keep: N | Safe remove: N | Review: N
+Local  — Keep: N | Safe remove: N | Review: N
+Linkage — paired: N | local-only: N | remote-only: N | gone upstream: N | diverged: N
 
-=== Keep ===
-branch    reason
-
-=== Safe to remove (merged) ===
-score  branch    merged PR    last commit
-
-=== Review (rated) ===
-score  branch    last commit  ahead  PR state/number  reasons
+=== Remote: Keep ===
+=== Remote: Safe to remove (merged) ===
+=== Remote: Review (rated) ===
+=== Local: Keep ===
+=== Local: Safe to remove (merged) ===
+=== Local: Review (rated) ===
 
 === Suggested commands (dry-run) ===
-# Remote delete examples (not executed):
-git push origin --delete <branch> ...
-# Local cleanup after remote delete:
-git branch -d <branch> ...
+# Remote (not executed):
+git push origin --delete <branch>
+# Local (not executed):
+git branch -d <branch>
 ```
 
 ### JSON shape (illustrative)
@@ -176,18 +190,35 @@ git branch -d <branch> ...
 {
   "repo": "owner/name",
   "default_branch": "main",
-  "remote": "origin",
-  "summary": { "keep": 3, "safe_remove": 18, "review": 26 },
-  "keep": [{ "branch": "main", "reason": "default" }],
-  "safe_remove": [{ "branch": "fix/typo", "score": 100, "merged_pr": 138 }],
-  "review": [{
-    "branch": "experiment/old-ui",
-    "score": 82,
-    "last_commit": "2024-03-01",
-    "ahead": 12,
-    "pr": { "number": 91, "state": "CLOSED", "merged": false },
-    "reasons": ["age:180d +25", "closed-pr:45d +20", "ahead:12 -12"]
-  }]
+  "remote_name": "origin",
+  "scope": "both",
+  "remote": {
+    "summary": { "keep": 3, "safe_remove": 18, "review": 26 },
+    "keep": [{ "branch": "main", "reason": "default" }],
+    "safe_remove": [{ "branch": "fix/typo", "score": 100, "merged_pr": 138 }],
+    "review": [{
+      "branch": "experiment/old-ui",
+      "score": 82,
+      "last_commit": "2024-03-01",
+      "ahead": 12,
+      "pr": { "number": 91, "state": "CLOSED", "merged": false },
+      "reasons": "age:180d +25,closed-pr:45d +20,ahead:12 -12"
+    }]
+  },
+  "local": {
+    "summary": { "keep": 2, "safe_remove": 5, "review": 4 },
+    "keep": [],
+    "safe_remove": [],
+    "review": []
+  },
+  "linkage": [{ "branch": "fix/typo", "status": "paired" }],
+  "linkage_summary": {
+    "paired": 10,
+    "local-only": 2,
+    "remote-only": 8,
+    "gone": 1,
+    "diverged": 0
+  }
 }
 ```
 
@@ -212,8 +243,9 @@ Extract shared helpers to `scripts/lib/git_github.sh` **only if** duplication ex
 name: branch-cleanup
 description: >-
   Audit GitHub branches: keep default/active/open PRs, flag merged branches
-  for removal, score stale or closed-PR branches 0–100. Use when the user
-  asks to clean up branches, prune stale remotes, or audit branch hygiene.
+  for removal, score stale or closed-PR branches 0–100. Reports remote and
+  local scopes. Use when the user asks to clean up branches, prune stale
+  remotes, or audit branch hygiene.
 disable-model-invocation: true
 ---
 ```
@@ -225,11 +257,13 @@ disable-model-invocation: true
    - Installed: `bash "${HOME}/.cursor/ai-toolkit/branch_sum.sh"`
    - Clone: `bash scripts/branch_sum.sh`
    - Shell tool: `required_permissions: ["full_network"]` for `gh`
-3. Present report using fixed template (Summary, Keep, Safe remove, Review table, Suggested commands)
+3. Present report using fixed template (Summary, remote + local Keep / Safe remove / Review, Suggested commands)
 4. **Do not delete** unless user explicitly confirms scope (e.g. “all safe-remove”, “score ≥ 90”, or named branches)
 5. On confirmation:
-   - Remote: `git push {remote} --delete {branch}` (batch with user-approved list)
-   - Local: `git branch -d` / `-D` only after remote delete or when user requests local-only
+   - Confirm **remote** deletes and **local** deletes separately unless the user names both
+   - Remote: `git push {remote} --delete {branch}` (batch with user-approved list; never `upstream`)
+   - Local: `git branch -d` for merged candidates; `git branch -D` only when the user names unmerged branches
+   - Never delete current checkout or worktree checkout
 6. Re-run `branch_sum.sh` to verify
 
 ### Safety rules (must appear verbatim in skill)
@@ -239,6 +273,8 @@ disable-model-invocation: true
 - Default to dry-run; merged-only suggestions still require confirmation
 - For scores 30–89, list branch + PR link + commits ahead before asking
 - Fork workflow: only delete on remotes the user owns (`origin`), not `upstream` parent
+- Confirm remote deletes and local deletes separately unless the user names both
+- Local merged suggestions use `git branch -d`; `git branch -D` only when the user names unmerged branches
 
 ### Output template
 
@@ -246,22 +282,31 @@ disable-model-invocation: true
 # Branch cleanup audit
 
 ## Summary
-[Counts and repo context]
+[Counts and repo context — remote and local]
 
-## Keep
+## Remote: Keep
 | Branch | Reason |
 
-## Safe to remove (merged)
+## Remote: Safe to remove (merged)
 | Branch | Merged PR | Last commit |
 
-## Review (rated)
+## Remote: Review (rated)
+| Score | Branch | Last commit | Ahead | PR | Reasons |
+
+## Local: Keep
+| Branch | Reason |
+
+## Local: Safe to remove (merged)
+| Branch | Merged PR | Last commit |
+
+## Local: Review (rated)
 | Score | Branch | Last commit | Ahead | PR | Reasons |
 
 ## Suggested commands
 [dry-run git commands — not executed]
 
 ## Verdict
-[Awaiting confirmation / Ready to delete N branches / Nothing to do]
+[Awaiting confirmation / Ready to delete N remote and M local branches / Nothing to do]
 ```
 
 ## Command design: `commands/branch_cleanup.md`
@@ -285,7 +330,7 @@ No changes to `install-manifest.json` schema; new script is picked up with exist
 |------|----------|
 | Pagination (>500 PRs or >1000 branches) | Paginate `gh pr list` / GraphQL `refs`; document limits in `--help` |
 | Branch renamed after PR | Match by latest PR `headRefName`; show PR number in output |
-| Local-only branches | Separate “local only” section; no remote delete suggestion |
+| Local-only branches | Appear under Local sections; linkage status `local-only`; no remote delete suggestion |
 | Shallow clone | Warn like `pr_sum.sh`; merged-into-base checks may be incomplete |
 | No `origin` remote | Use first remote or require `--remote` |
 | Auth failure | Same errors as `release_sum.sh`; stop before scoring if PR data required |
@@ -325,37 +370,37 @@ Start with `gh pr list` + `git ls-remote` for v1; add GraphQL if performance bec
 
 ### Phase 1 — Script core (MVP)
 
-- [ ] Add `scripts/branch_sum.sh` with Context / Summary / Keep / Safe remove sections
-- [ ] Default + open PR + merged PR detection
-- [ ] `git merge-base --is-ancestor` for fully merged branches
-- [ ] `--remote`, `--no-fetch`, `--help`
-- [ ] Reuse `pr_sum.sh` shell patterns and gh auth messaging
+- [x] Add `scripts/branch_sum.sh` with Context / Summary / remote+local Keep / Safe remove sections
+- [x] Default + open PR + merged PR detection
+- [x] `git merge-base --is-ancestor` for fully merged branches
+- [x] `--remote`, `--scope`, `--no-fetch`, `--help`
+- [x] Reuse `pr_sum.sh` shell patterns and gh auth messaging
 
-**Acceptance:** Running on a real repo prints correct keep and safe-remove lists; no deletes.
+**Acceptance:** Running on a real repo prints correct keep and safe-remove lists for remote and local; no deletes.
 
 ### Phase 2 — Scoring and review bucket
 
-- [ ] Implement `score_branch()` with rubric v1
-- [ ] Review table with reason tokens
-- [ ] `--min-score`, `--keep-pattern`
-- [ ] Closed-not-merged PR signals
+- [x] Implement `score_branch()` with rubric v1
+- [x] Review table with reason tokens
+- [x] `--min-score`, `--keep-pattern`
+- [x] Closed-not-merged PR signals
 
 **Acceptance:** Ambiguous branches appear in Review with scores and explanations.
 
 ### Phase 3 — Agent surfaces
 
-- [ ] `skills/branch-cleanup/SKILL.md`
-- [ ] `commands/branch_cleanup.md`
-- [ ] README + `install.sh` gh hint
+- [x] `skills/branch-cleanup/SKILL.md`
+- [x] `commands/branch_cleanup.md`
+- [x] README + `install.sh` gh hint
 
 **Acceptance:** `@branch-cleanup` / command runs script and produces templated report; refuses delete without confirmation.
 
 ### Phase 4 — Machine output and hardening
 
-- [ ] `--json` output
-- [ ] `--repo`, `--base` overrides
-- [ ] Fork-aware remote selection (don’t suggest upstream deletes)
-- [ ] Pagination for large repos
+- [x] `--json` output (top-level `remote` / `local` objects + `linkage`)
+- [x] `--repo`, `--base` overrides
+- [x] Fork-aware remote selection (don’t suggest upstream deletes)
+- [x] Warn when PR list hits `--limit 500`
 - [ ] Optional GraphQL bulk fetch
 
 **Acceptance:** Agent can parse JSON; large repo smoke test completes without rate-limit failures.
@@ -363,7 +408,6 @@ Start with `gh pr list` + `git ls-remote` for v1; add GraphQL if performance bec
 ### Phase 5 — Polish (optional)
 
 - [ ] Extract shared bash helpers to `scripts/lib/git_github.sh` if duplication hurts maintenance
-- [ ] `--local-only` mode for local branch audit without gh
 - [ ] `--active-days N` to treat recently pushed branches as keep candidates
 - [ ] Integration note in `docs/cursor.md` if needed
 
@@ -371,22 +415,22 @@ Start with `gh pr list` + `git ls-remote` for v1; add GraphQL if performance bec
 
 Manual verification (no automated bash tests in repo today):
 
-1. **Repo with merged PR branches left on remote** — appear in Safe remove
-2. **Open PR branch** — in Keep; score 0 if forced through rubric
+1. **Repo with merged PR branches left on remote** — appear in Remote safe remove; local tracking branch in Local safe remove when not checked out
+2. **Open PR branch** — Keep on both sides; score 0 if forced through rubric
 3. **Protected default** — in Keep
-4. **Closed unmerged PR, old** — Review with score ≥ 60
-5. **Recent branch, commits ahead of main** — Review with low score
-6. **`--no-fetch`** — runs offline against local refs; warns if stale
-7. **No gh** — degrades gracefully (git-only merged check)
-8. **Skill dry-run** — agent prints suggested `git push --delete` but does not run until user confirms
+4. **Current / worktree checkout** — Local keep
+5. **Closed unmerged PR, old** — Review with score ≥ 60
+6. **Recent branch, commits ahead of main** — Review with low score
+7. **`--no-fetch`** — runs offline against local refs; warns if stale
+8. **No gh** — degrades gracefully (git-only merged check for both scopes)
+9. **`--scope local` / `--scope remote`** — omit the other scope’s classification sections
+10. **Skill dry-run** — agent prints suggested `git push --delete` / `git branch -d` but does not run until user confirms
 
-## Open questions
+## Decisions (locked)
 
-Resolve before or during Phase 2:
-
-1. **“Active” definition** — open PR only, or also branches pushed within N days? *Proposal: open PR + current branch + optional `--active-days N` in Phase 5.*
-2. **Delete scope default** — remote only, local only, or both? *Proposal: remote first; local `git branch -d` only after remote delete or explicit local confirmation.*
-3. **Minimum gh scope** — read-only `repo` sufficient; document in README.
+1. **“Active” definition** — open PR, current checkout, and worktree checkout. Optional `--active-days N` stays in Phase 5.
+2. **Delete suggestions** — remote and local both appear in dry-run output; each requires its own confirmation unless the user names both.
+3. **Minimum gh scope** — read-only `repo` is sufficient for PR list and protected-branch metadata; document in README.
 
 ## References
 

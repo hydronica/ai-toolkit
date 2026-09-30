@@ -349,7 +349,7 @@ sync_registered_projects() {
 
 check_gh() {
   if ! command -v gh >/dev/null 2>&1; then
-    echo "GitHub CLI (gh) is not installed. pr_sum.sh and release_sum.sh require it."
+    echo "GitHub CLI (gh) is not installed. pr_sum.sh, release_sum.sh, and branch_sum.sh require it."
     echo "  Install: https://cli.github.com/"
     echo "  Then run: gh auth login"
     return 0
@@ -357,7 +357,7 @@ check_gh() {
   if ! gh auth status >/dev/null 2>&1; then
     echo "GitHub CLI is installed but not authenticated."
     echo "  Run: gh auth login"
-    echo "  Required for pr_sum.sh and release_sum.sh."
+    echo "  Required for pr_sum.sh, release_sum.sh, and branch_sum.sh."
   fi
 }
 
