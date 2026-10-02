@@ -7,7 +7,7 @@ alwaysApply: false
 
 Prefer **explicit errors**, **synchronous APIs** unless concurrency is intrinsic, **small consumer-defined interfaces**, **concrete return types**, **`context.Context` as the first parameter** when cancellation/deadlines apply, and **feature-oriented packages** (`internal/` for unstable implementation).
 
-**File layout:** one primary `.go` file per package until ~400+ lines or distinct subsystems; see **`go-project-structure.md`**.
+**File layout:** while a package has one primary `.go` file, keep it until ~600+ lines, then split by type (struct + methods stay in the same file). That line threshold is only for that first split—not a reason to further split files once the package is multi-file. Never split a type across files; if one outgrows the package, move it to a subpackage. See **`go-project-structure.md`**.
 
 **Planning:** for behavior changes, API changes, or bug fixes, read **`go-testing.mdc`** (planning + bug-fix test checklist) and map regressions to tests before implementation — **before** writing test code, not after.
 

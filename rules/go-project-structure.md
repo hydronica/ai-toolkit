@@ -60,7 +60,11 @@ project-root/
 
 ## Files within a package
 
-Prefer **one primary `.go` file** (plus `_test.go`) until ~400+ lines or clearly distinct subsystems. Split when (a) hard to review, (b) a second subsystem appears, or (c) build boundaries require it (`//go:build`, `*_unix.go`, generated code).
+Prefer **one primary `.go` file** (plus `_test.go`) while the package is still a single file. When that file reaches ~600+ lines, you may split by **type**: put a struct and all of its methods in their own file (e.g. `client.go`, `store.go`). Also split when build boundaries require it (`//go:build`, `*_unix.go`, generated code).
+
+The ~600-line threshold applies only to that **first** split from a single-file package. Once the package already has multiple files, do not use line count alone to split further.
+
+**Keep a type with its methods.** Do not move a struct into one file and its methods into another, regardless of size. If a type (or the package around it) grows too large to stay coherent, extract it into a **subpackage** and start again with one primary file there.
 
 Keep sentinels and small helpers in the primary file. Avoid `errors.go`, `types.go`, `paths.go`, and similar kind-splits until related symbols form a cluster. Simplicity applies to **file layout**, not just APIs.
 
