@@ -150,12 +150,13 @@ func (r *UsageResult) writeUsageSection(b *strings.Builder) {
 			fmt.Fprintf(b, "  Remaining:     %.0f\n", *r.RequestsRemaining)
 		}
 	case usageKindOverall:
+		used := r.requestUsed()
+		fmt.Fprintln(b, "Total usage:")
 		if r.RequestsLimit <= 0 {
+			fmt.Fprintf(b, "  Spent:         %s\n", formatDollars(used))
 			return
 		}
-		used := r.requestUsed()
 		pct := requestPercent(used, r.RequestsLimit)
-		fmt.Fprintln(b, "Total usage:")
 		fmt.Fprintf(b, "  Spent:         %s of %s (%.1f%%)\n",
 			formatDollars(used), formatDollars(r.RequestsLimit), pct)
 	}

@@ -435,6 +435,63 @@ Team on-demand:  $12.34 spent
 `,
 			},
 		},
+		"enterprise_team_no_limit": {
+			Input: `{
+  "billingCycleStart": "2026-08-01T00:00:00.000Z",
+  "billingCycleEnd": "2026-09-01T00:00:00.000Z",
+  "membershipType": "enterprise",
+  "limitType": "team",
+  "isUnlimited": false,
+  "autoModelSelectedDisplayMessage": "Youve used 0% of your included total usage,namedModelSelectedDisplayMessage:Youve used 0% of your included API usage",
+  "individualUsage": {
+    "overall": {
+      "enabled": false,
+      "used": 233,
+      "limit": null,
+      "remaining": null
+    }
+  },
+  "teamUsage": {
+    "onDemand": {
+      "enabled": true,
+      "used": 1234,
+      "limit": 12345,
+      "remaining": 11111
+    }
+  }
+}`,
+			Expected: parseUsageOutput{
+				result: &UsageResult{
+					PeriodStart:    time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+					PeriodEnd:      time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+					MembershipType: "enterprise",
+					LimitType:      "team",
+					UsageKind:      usageKindOverall,
+					AutoPercent:    0,
+					APIPercent:     0,
+					RequestsUsed:   233,
+					Team: &TeamUsageInfo{
+						Enabled:   true,
+						Used:      1234,
+						Limit:     floatPtr(12345),
+						Remaining: floatPtr(11111),
+					},
+				},
+				output: `Cursor usage
+-------------
+Billing period:  2026-08-01T00:00 UTC → 2026-09-01T00:00 UTC
+Time remaining:  16 days (48.4% elapsed)
+Plan:            enterprise (team limit)
+Total usage:
+  Spent:         $2.33
+
+Team on-demand:  $12.34 spent
+  Limit:         $123.45
+  Remaining:     $111.11
+
+`,
+			},
+		},
 	}
 	trial.New(fn, cases).Comparer(func(actual, expected interface{}) (bool, string) {
 		got := actual.(parseUsageOutput)
