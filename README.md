@@ -87,10 +87,13 @@ After you install project rules, add this **user rule** so the agent reports whi
 **Suggested text**
 
 ```markdown
-Rule Attribution: 
-After creating or modifying files, end your response with **Rules applied** (last section). Skip when no files changed.
+Rule Attribution:
 
-Summarize which Cursor **project rules** guided your edits. List only rules that were actually in context (globs, alwaysApply, description match, or explicit `@` mention). Do not guess rule names.
+End every response with **Rules applied** (last section).
+
+Before planning code changes, read matching project rules per [`AGENTS.md`](AGENTS.md) and let the plan follow those conventions, not only issue docs.
+
+List only rules that were in context (globs, alwaysApply, description match, `@` mention, or opened because `AGENTS.md` required them). Do not guess rule names.
 
 ## Rules applied
 
@@ -98,12 +101,7 @@ Summarize which Cursor **project rules** guided your edits. List only rules that
 |------|-------|
 | `path/or/pattern` | `rule-name` |
 
-When no per-file table applies, use a single row with `—` in the first column:
-
-- `— | No Rules` — no project rules were loaded
-- `— | None` — project rules exist but none applied to the changed files
-
-Otherwise: one row per changed file; collapse paths that share the same rule set; alphabetize rule names within each cell.
+Use `— | None` for read-only turns with no matching project rules; `— | No Rules` if none loaded. On plans, use planned paths or globs when you consulted rules for that scope. Otherwise one row per changed file or planned pattern; collapse paths with the same rule set; alphabetize rule names in each cell.
 ```
 
 
