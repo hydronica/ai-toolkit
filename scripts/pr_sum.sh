@@ -347,6 +347,24 @@ remote_repo_slug() {
   parse_repo_slug "${url}"
 }
 
+# Hostname of a remote URL, without user or port: https://host/..., ssh://user@host:port/..., or user@host:path.
+# Returns 1 when there is no usable hostname (missing remote or a local path).
+remote_host_name() {
+  local url="" authority=""
+  url="$(git remote get-url "$1" 2>/dev/null || true)"
+  [[ -n "${url}" ]] || return 1
+  if [[ "${url}" == *"://"* ]]; then
+    authority="${url#*://}"
+    authority="${authority%%/*}"
+  else
+    authority="${url%%:*}"
+  fi
+  authority="${authority##*@}"
+  authority="${authority%%:*}"
+  [[ "${authority}" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+  echo "${authority}"
+}
+
 # SHA of refs/heads/<branch> on <remote> (exact match), or empty.
 remote_branch_sha() {
   local remote="$1"
@@ -636,8 +654,6 @@ detect_pr_target() {
 
   if [[ "${GH_AUTH_OK:-}" == "true" ]]; then
     gh_ok="true"
-  elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    gh_ok="true"
   fi
 
   if [[ "${gh_ok}" == "true" ]]; then
@@ -803,10 +819,19 @@ fi
 # Collect PR readiness status for summary
 GH_AUTH_OK="false"
 GH_AUTH_ERROR=""
+GH_CHECK_HOST=""
 MERGE_OK="false"
 
 if command -v gh >/dev/null 2>&1; then
-  GH_AUTH_OUTPUT="$(gh auth status 2>&1)"
+  # Check only the host this branch pushes to (where the PR is opened), so an unrelated
+  # gh login cannot fail the check. `|| true` keeps a failing gh call from aborting the
+  # script under set -e; the output is still classified below.
+  GH_CHECK_HOST="$(remote_host_name "${PUSH_REMOTE:-${PUSH_HINT_REMOTE:-origin}}" || true)"
+  if [[ -n "${GH_CHECK_HOST}" ]]; then
+    GH_AUTH_OUTPUT="$(gh auth status --active --hostname "${GH_CHECK_HOST}" 2>&1 || true)"
+  else
+    GH_AUTH_OUTPUT="$(gh auth status --active 2>&1 || true)"
+  fi
   if echo "${GH_AUTH_OUTPUT}" | grep -q "Logged in"; then
     GH_AUTH_OK="true"
   else
