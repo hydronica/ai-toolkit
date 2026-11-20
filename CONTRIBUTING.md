@@ -99,6 +99,7 @@ Skills are longer-lived instructions than one-off prompts:
 - Separate **policy** (must/never) from **procedure** (steps).
 - Link or `@`-reference **canonical examples** in a consumer repo when the skill is meant to be copied there; in this toolkit, use `examples/` or short illustrative snippets.
 - List **failure modes** (“if tests fail, do X”).
+- **Minimize dependencies.** Prefer capabilities the user already has in Cursor (especially **MCP tools**) over new language runtimes, pip/npm packages, or system image tools. If a skill needs a helper script, use plain shell plus ubiquitous OS tools, or run logic in the browser via MCP `evaluate_script`. Document runtime requirements in [README.md](README.md) **Dependencies** and any MCP setup in **[MCP servers](README.md#mcp-servers)**.
 
 ## Authoring prompts (`prompts/`)
 

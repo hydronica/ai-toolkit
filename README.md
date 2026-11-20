@@ -42,6 +42,93 @@ From a local clone with Go installed, `install.sh` builds `cuse` and `db-query` 
 
 Pass `--no-sync-rules` to skip refreshing registered project rules when assets do change.
 
+## Dependencies
+
+What you need beyond a normal Cursor install. Optional pieces are called out in install output when they matter.
+
+| Area | Required | Optional |
+|------|----------|----------|
+| **Core install** (`install.sh`) | Shell, `curl` or a local clone | [jq](https://jqlang.org/) (install manifest and `--check-attribution`); [GitHub CLI](https://cli.github.com/) (`gh auth login`) for `pr_sum.sh`, `release_sum.sh`, and `branch_sum.sh`; [Go](https://go.dev/) to build `cuse` and `db-query` from a local clone |
+| **Project rules** (`install-rules.sh`) | Shell | None |
+| **Capture HTML** (`@capture-html`) | [Chrome DevTools MCP](#chrome-devtools-mcp) with `--workspace=${userHome}/Downloads`; host `base64` to decode the stitched PNG | Node.js + Chrome; absolute `npx` path when using nvm (see [setup](#chrome-devtools-mcp)) |
+| **Draw.io diagrams** (`drawio.mdc`) | [Draw.io Integration](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio) (or Cursor equivalent) to edit committed `.drawio.svg` / `.drawio.png` | [draw.io MCP](#drawio-mcp) when the agent should draft or iterate diagrams in chat |
+| **Branch cleanup / PR scripts** | Git | `gh` (+ `jq` for full `branch_sum.sh` metadata) |
+
+Skills and commands should keep new dependencies rare; see [CONTRIBUTING.md](CONTRIBUTING.md) (authoring skills). MCP-backed workflows are listed in **[MCP servers](#mcp-servers)**.
+
+## MCP servers
+
+Some skills and rules need [MCP](https://cursor.com/docs/mcp) tools. Add each server under **`mcpServers`** in `~/.cursor/mcp.json` or `.cursor/mcp.json`, merge multiple blocks into one file, then enable them in **Cursor Settings → MCP**. Use **`${userHome}`** in paths ([config interpolation](https://cursor.com/docs/mcp)) instead of hard-coded usernames.
+
+| Toolkit asset | MCP |
+|---------------|-----|
+| `@capture-html` | [Chrome DevTools](#chrome-devtools-mcp) |
+| `drawio.mdc` | [draw.io](#drawio-mcp) (optional) |
+| `db-query` | [db-query](#db-query-mcp-optional) |
+
+### Chrome DevTools MCP
+
+**For:** [`@capture-html`](skills/capture-html/SKILL.md) — browser navigation, screenshots, in-page stitch. **Requires:** [Node.js](https://nodejs.org/) LTS, [Chrome](https://www.google.com/chrome/), and [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp).
+
+1. Run `command -v npx` and note the path (nvm/fnm users need this — Cursor often does not load your shell `PATH`). 
+2. Merge the block below into `mcp.json`. Set **`command`** and the Node segment in **`env.PATH`** to that `npx` path; align `v22.23.4` with your version under `${userHome}/.nvm/versions/node/`.
+3. **`--workspace=${userHome}/Downloads`** — required so `take_screenshot` can write where the skill saves PNGs.
+4. **Extensions (optional):** keep `--categoryExtensions`, `--ignore-default-chrome-arg=--disable-extensions`
+   
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "${userHome}/.nvm/versions/node/v22.23.4/bin/npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--workspace=${userHome}/Downloads",
+        "--categoryExtensions=true",
+        "--ignore-default-chrome-arg=--disable-extensions"
+      ],
+      "env": {
+        "PATH": "${userHome}/.nvm/versions/node/v22.23.4/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+If MCP stays red but `npx -y chrome-devtools-mcp@latest --version` works in a terminal, fix **`command`** / **`env.PATH`**. Screenshot path errors mean missing **`--workspace`**. Restart MCP after changing extension flags. More: [configuration](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/configuration.md).
+
+### draw.io MCP
+
+**For:** optional agent diagram drafts with [`drawio.mdc`](rules/drawio.mdc). Committed files still use embedded XML in `.drawio.svg` / `.drawio.png`; use the [Draw.io Integration](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio) extension to edit them. Install the rule from `~/.cursor/ai-toolkit/rules-source/drawio.mdc` or **Remote rule (GitHub)**.
+
+**Hosted (Cursor 2.6+, inline in chat)** — diagram data goes to `mcp.draw.io` ([privacy](https://www.drawio.com/docs/manual/generate/drawio-mcp-server/)):
+
+```json
+{
+  "mcpServers": {
+    "drawio": {
+      "url": "https://mcp.draw.io/mcp"
+    }
+  }
+}
+```
+
+
+### db-query MCP (optional)
+
+**For:** read-only queries via [`cmd/db-query`](cmd/db-query/README.md) after `install.sh` (with Go) or `make db-query`. Place `config.toml` beside the binary (`config.example.toml`).
+
+```json
+{
+  "mcpServers": {
+    "db-query": {
+      "command": "${userHome}/.cursor/ai-toolkit/db-query",
+      "args": ["-mcp"]
+    }
+  }
+}
+```
+
 ### uninstall
 
 `[uninstall.sh](uninstall.sh)` removes global toolkit paths. By default it does **not** remove project rules under `.cursor/rules/ai-toolkit/`. Use `uninstall.sh --purge-project-rules` to remove rules from all registered projects first.
@@ -121,6 +208,8 @@ Use `— | None` for read-only turns with no matching project rules; `— | No R
 - **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke `@red-green-bug-fix` (not auto-attached). `skills/branch-cleanup/` — remote/local branch audit via `branch_sum.sh`; invoke `@branch-cleanup` or `/ai-toolkit/branch_cleanup` (deletes only after confirmation).
 - **PR ready:** `commands/pr_ready.md` + `skills/pr-ready/` — check changes against `CONTRIBUTING.md`, `AGENTS.md`, and project rules before opening a PR; invoke `/ai-toolkit/pr_ready` or `@pr-ready`. For best results, install project rules with `install_rules` first.
+- **Capture HTML:** `skills/capture-html/` — capture a whole web page as one PNG via the Chrome DevTools MCP; stitches viewport sections in the browser when lazy panels (for example Grafana) would be blank in a full-page capture. Invoke `@capture-html`. See **[MCP servers → Chrome DevTools](#chrome-devtools-mcp)** and **Dependencies**.
+- **Draw.io:** `rules/drawio.mdc` — diagram file format and style for `**/*.drawio*`. Optional **[draw.io MCP](#drawio-mcp)** for agent-authored diagrams; use the Draw.io VS Code extension for edits on committed files.
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
 - **Precedence:** If you use Team Rules, remember order is **Team → Project → User** when guidance conflicts. See [Team Rules](https://cursor.com/docs/rules#team-rules).
 
