@@ -21,3 +21,19 @@ When a task is a **bug fix**, adds **regression tests**, lists **Fix Focus Areas
 3. Do **not** add nested `t.Run` loops, test helpers, or extended input structs when golden `Expected` catches the bug.
 
 Suggested-fix / agent prompts should include `@go-testing.mdc` (or list the test file in Fix Focus Areas) so this rule loads; production-only globs are not enough on their own.
+
+## Approval required for side effects
+
+Without explicit approval in the current message, do **not**:
+
+- Create, modify, or delete files at paths that are **not** reachable from the open workspace tree (absolute paths outside the workspace root, or targets that are not exposed via a path in the workspace).
+- Run git commands that change state in any repo: commit, branch, worktree, push, stash, or reset. Also avoid fetch commands that update refs in another repo.
+- Request `git_write`, `all`, or other elevated permissions for these actions.
+
+**Workspace symlinks:** You **may** create, modify, or delete files and folders that are accessible in the workspace through symlinks (including when the resolved target lies outside the workspace root). Whenever you do, **call that out explicitly in orange** at the start of the edit summary and in the final response, for example:
+
+`<span style="color: darkorange">Symlink edit: \`workspace/relative/path\` → \`resolved/target\`</span>`
+
+Use the workspace-relative path; add the resolved target when the tools report it. Apply the same callout when listing those paths in **Rules applied** or change summaries.
+
+If a fix could land in more than one place (which repo, branch, or file) or needs a commit, present the options and wait for a choice before acting.
