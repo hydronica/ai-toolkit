@@ -1,4 +1,5 @@
 .env
+.conf.toml
 scripts/cuse
 scripts/db-query
 coverage.out
