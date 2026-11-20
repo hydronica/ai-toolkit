@@ -1,0 +1,91 @@
+---
+description: Draw.io diagrams. Must render in browser/Markdown and stay editable in the draw.io VS Code plugin. Straight or orthogonal arrows, name-only labels, purposeful color and shape.
+globs: "**/*.drawio*"
+alwaysApply: false
+---
+
+# Draw.io diagrams
+
+## File format
+
+A diagram must be both viewable and editable.
+
+| Format | Use when |
+|--------|----------|
+| `.drawio.svg` | Default. Scales cleanly in browsers and Markdown. |
+| `.drawio.png` | A raster image is required, for example a fixed pixel width in a doc. |
+
+Both formats must embed the draw.io XML so the draw.io VS Code plugin opens them as editable diagrams:
+
+- **SVG:** store the draw.io XML in the `content` attribute of the root `<svg>` element.
+- **PNG:** store the draw.io XML in a `tEXt` chunk with the keyword `mxfile`.
+
+Never save raw `<mxfile>` XML under an image extension. It is not viewable in a browser or Markdown. A plain `.drawio` source file can be kept next to the image, but it does not count as the deliverable.
+
+Reference the image from Markdown with a relative path: `![Alt text](diagram.drawio.svg)`.
+
+## Background
+
+- Every diagram has a solid white or off-white background (for example `#ffffff` or `#fafafa`). It must not be transparent, so the diagram stays readable in both light and dark mode.
+- In an SVG, add a rectangle that covers the full `viewBox` as the first element inside the main `<g>`, with `fill` set to the background color and `stroke="none"`. Do not rely on the root `<svg>` `style` background, because Markdown previews ignore it.
+- In draw.io, set the same color under Format > Background, so a re-export keeps the background.
+
+## Shapes
+
+Shape shows the system type. Color shows the category.
+
+Use a rounded rectangle for most systems and states. Use another shape only when it adds meaning.
+
+| System type | Shape | Draw.io style |
+|-------------|-------|---------------|
+| Internal system or state (default) | Rounded rectangle | `rounded=1` |
+| Entry point or gateway | Rectangle with side bars | `shape=process` |
+| Background worker | Rounded rectangle, same as other internal services | `rounded=1` |
+| Database | Cylinder, taller than wide | `shape=cylinder3` |
+| File or generic document | File image | `sketch=0;aspect=fixed;pointerEvents=1;shadow=0;dashed=0;html=1;strokeColor=none;labelPosition=center;verticalLabelPosition=bottom;verticalAlign=top;align=center;fillColor=#828282;shape=mxgraph.azure.file` |
+| Script file | Script file | `shape=mxgraph.azure.script_file;aspect=fixed;fillColor=#828282;strokeColor=none` |
+| Code file | Code file | `shape=mxgraph.azure.code_file;aspect=fixed;fillColor=#828282;strokeColor=none` |
+| File key | File key | `shape=mxgraph.office.concepts.file_key;fillColor=#828282;strokeColor=none` |
+| Trust or ownership boundary | Dashed rectangle, no fill, with a label | `dashed=1;fillColor=none` |
+
+Shape rules:
+
+- **Hexagons are never stretched.** Keep the regular proportions (width about 1.15 × height) and set `aspect=fixed`. Write the label as a separate text object on top of the hexagon, then group the two so they move together. Do not put the label inside the hexagon.
+- **Databases are taller than wide.** Use a cylinder with height at least 1.25 × width. Do not use a short, wide cylinder.
+- **Files and generic documents use the File image.** Use Script file, Code file, or File key only for those specific purposes.
+- **File-type icons share one style.** Use fill `#828282` with no stroke for File, Script file, Code file, and File key. Put the label below the icon, and do not leave the icon unlabeled.
+- **Icons keep their proportions.** Use `aspect=fixed`, and put the label below the icon.
+- **Attach arrows only to a straight side or to a vertex or flat edge center.** Never attach to a slanted side, because the arrow will float off the shape.
+- **Spread arrows along the same side.** When several arrows leave one side, space their endpoints along that straight side.
+- **Mark call steps with numbered badges.** Use small white circles on the arrow. The labels then carry only the call name.
+- **Add new shapes here first.** For a new system type, pick a shape from the table. If none fits, add a row here before using it.
+
+## Connectors
+
+- Use straight connectors (`rounded=0`, no `edgeStyle`) by default. Never use curved connectors.
+- Use orthogonal connectors (`edgeStyle=orthogonalEdgeStyle`) when a straight line would cross a shape or when the layout is grid-aligned.
+- Show direction with an arrowhead on the target end (`endArrow=classic`). Every connector that implies a flow gets one.
+
+## Labels
+
+- A shape's text names the system or component, for example `Data Broker API`. Add at most one short qualifier, such as a technology or store type.
+- A connector's text names the call or action, for example `POST /jobs`. Do not write sentences.
+- Do not put descriptions, explanations, or notes in the diagram. Explain them in the surrounding document.
+
+## Color
+
+- Use color only to tell systems, layers, or patterns apart. Do not color shapes for decoration.
+- Reuse the same color for the same category in every diagram. Suggested defaults:
+  - Entry points and external callers: fill `#fff2cc`, stroke `#d6b656`
+  - Internal services: fill `#dae8fc`, stroke `#6c8ebf`
+  - Data stores: fill `#f5f5f5`, stroke `#666666`
+- When more than one color is used, add a legend made of labeled color swatches. The legend contains labels only.
+
+## Verification
+
+Before a diagram is handed off:
+
+- The file displays as an image when opened in a browser and in a Markdown preview.
+- The draw.io VS Code plugin opens it as an editable diagram.
+- Every shape and connector label is readable at the size it will appear in the document.
+- The background is solid white or off-white, not transparent.

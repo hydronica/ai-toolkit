@@ -1,0 +1,66 @@
+---
+description: Bruno collection decisions—precedence, auth, layout, regression tests
+globs: bruno/**
+alwaysApply: false
+---
+
+# Bruno (`bruno/`)
+
+Checked-in requests are **HTTP regression**. **README, `bruno/*.md`, and same-folder `.bru` files win** over this rule.
+
+Do not introduce a parallel base URL variable or copy collection-level token/OAuth scripts into individual requests. Do not commit static tokens to work around 401s—fix env/globals per repo docs.
+
+## Auth
+
+| Situation | Rule |
+|-----------|------|
+| Authenticated call | `auth: inherit`; keep acquisition in `collection.bru` (or existing folder script)—do not duplicate cache/refresh logic. |
+| Negative auth | `auth: none` so a valid bearer is not sent. |
+| Extra hop (app token, custom header) | `script:pre-request` on that request/folder only; reuse vars the collection already sets. |
+| Secrets | `vars:secret` in environments; no secrets in committed bodies. |
+
+## Layout
+
+| Situation | Rule |
+|-----------|------|
+| Path → folder | Match the repo’s version split (`v0/`, `v1/`, root, …)—follow siblings, not other repos. |
+| New file vs variant | New route or materially different body → new `.bru`; same route, different scenario → variant name like neighbors. |
+| Flows | Numbered files + `meta.seq`; capture IDs in `script:post-response` for later steps. |
+| Placement / URL auth prefix unclear | `bruno/*.md` or router docs, else **ask**—do not guess. |
+
+## Tests
+
+| Trigger | Action |
+|---------|--------|
+| HTTP contract or user-visible API bug | Update `.bru` + regression tests |
+| Refactor, same HTTP surface | Bruno only if URL, `auth`, or env vars moved |
+
+Assert like **siblings** (`res.status` vs `getStatus`, body parsing). Prefer **structure** (status, keys, types, errors) over env-specific full JSON; put movable IDs in env vars. Bruno covers wire behavior—not in-process unit tests unless the team says otherwise.
+
+### Grouping and failure output
+
+| Rule | Why |
+|------|-----|
+| **One `.bru` = one call** (method + URL + scenario). Put every assertion for that call in that file’s single `tests { }` block—not spread across duplicates. | Failures name the request file / `meta.name`; runner output maps to one endpoint. |
+| **Test names start with the call**—e.g. `GET /v2/user — HTTP`, `POST /v1/dwh/summary — has data[]`. Include method and path (or `meta.name` if path is huge). | First line of a failure identifies which endpoint broke. |
+| **HTTP gate first.** Before shape/field tests, one gate test for the expected status (or 2xx). On mismatch, fail with **status + response body text** (trimmed JSON/string), not only `expected 200 got 403`. | One clear line: `non-403: {"message":"invalid auth"}` instead of a status failure plus many shape failures. |
+| **Later tests skip when the gate would fail**—`if (res.getStatus() !== <expected>) return;` (or same helper the folder uses). Do not assert JSON shape after 401/403/500. | Avoid cascading “property X undefined” noise after auth or routing errors. |
+| **Negative / error cases:** one primary test combining status and error body (substring or key), e.g. forbidden + body contains `invalid auth`. Optional second test only for extra fields on that error shape. | Matches how operators debug: status and server message together. |
+
+Shared helper in `tests` (copy from a sibling if one exists):
+
+```javascript
+const status = res.getStatus(); // or res.status — match folder
+const bodyRaw = typeof res.body === "string" ? res.body : JSON.stringify(res.body);
+const clip = (s, n = 800) => (s && s.length > n ? s.slice(0, n) + "…" : s);
+const httpFail = (label, expected, got) =>
+  expect.fail(`${label}: expected ${expected}, got ${got}: ${clip(bodyRaw)}`);
+```
+
+Gate pattern (success path): if `status !== 200`, call `httpFail("GET /v2/user — HTTP", 200, status)` instead of bare `expect(status).to.equal(200)`.
+
+When improving thin tests (`expect(res.status).to.equal(200)` only), refactor to **gate + guarded shape** in the same file—do not add more unguarded field tests on top.
+
+## Unless asked
+
+CI wiring, rewriting `collection.bru` auth, mass renames, or duplicating repo conversion guides into every request.
