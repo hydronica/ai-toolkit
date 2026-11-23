@@ -99,7 +99,7 @@ If MCP stays red but `npx -y chrome-devtools-mcp@latest --version` works in a te
 
 ### draw.io MCP
 
-**For:** optional agent diagram drafts with [`drawio.mdc`](rules/drawio.mdc). Committed files still use embedded XML in `.drawio.svg` / `.drawio.png`; use the [Draw.io Integration](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio) extension to edit them. Install the rule from `~/.cursor/ai-toolkit/rules-source/drawio.mdc` or **Remote rule (GitHub)**.
+**For:** optional agent diagram drafts with [`drawio.mdc`](rules/drawio.mdc) (always installed with org rules via `install-rules.sh`). Committed files still use embedded XML in `.drawio.svg` / `.drawio.png`; use the [Draw.io Integration](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio) extension to edit them.
 
 **Hosted (Cursor 2.6+, inline in chat)** — diagram data goes to `mcp.draw.io` ([privacy](https://www.drawio.com/docs/manual/generate/drawio-mcp-server/)):
 
@@ -206,10 +206,11 @@ Use `— | None` for read-only turns with no matching project rules; `— | No R
 - **User-level install:** After `install.sh`, commands, skills, and agents live under `~/.cursor/{commands,skills,agents}/ai-toolkit`, with scripts and `rules-source/` at `~/.cursor/ai-toolkit`.
 - **Project rules:** Run `install-rules.sh` or the `install_rules` command to install filtered rules into `<project>/.cursor/rules/ai-toolkit/`. Projects are registered automatically for sync on the next `install.sh` run. Use `--no-register` to opt out.
 - **Go rules:** `go-standards.mdc`, `go-testing.mdc`, and companion `go-project-structure.md` — installed when Go is detected or `--filter go` is used.
+- **Bruno rules:** `bruno.mdc` — installed when a Bruno collection is detected (`bruno/`, `bruno.json`, or `collection.bru`) or `--filter bruno` is used.
+- **Draw.io:** `drawio.mdc` — always installed with org rules (so first diagrams are covered); attaches via `**/*.drawio*` globs. Optional **[draw.io MCP](#drawio-mcp)** for agent-authored diagrams; use the Draw.io VS Code extension for edits on committed files.
 - **Skills:** `skills/red-green-bug-fix/` — replication contract, RED/GREEN bug fix; invoke `@red-green-bug-fix` (not auto-attached). `skills/branch-cleanup/` — remote/local branch audit via `branch_sum.sh`; invoke `@branch-cleanup` or `/ai-toolkit/branch_cleanup` (deletes only after confirmation).
 - **PR ready:** `commands/pr_ready.md` + `skills/pr-ready/` — check changes against `CONTRIBUTING.md`, `AGENTS.md`, and project rules before opening a PR; invoke `/ai-toolkit/pr_ready` or `@pr-ready`. For best results, install project rules with `install_rules` first.
 - **Capture HTML:** `skills/capture-html/` — capture a whole web page as one PNG via the Chrome DevTools MCP; stitches viewport sections in the browser when lazy panels (for example Grafana) would be blank in a full-page capture. Invoke `@capture-html`. See **[MCP servers → Chrome DevTools](#chrome-devtools-mcp)** and **Dependencies**.
-- **Draw.io:** `rules/drawio.mdc` — diagram file format and style for `**/*.drawio*`. Optional **[draw.io MCP](#drawio-mcp)** for agent-authored diagrams; use the Draw.io VS Code extension for edits on committed files.
 - **AGENTS.md:** For simpler, repo-wide instructions without per-rule metadata, use `AGENTS.md` in the project root (or nested directories). See [AGENTS.md](https://cursor.com/docs/rules#agentsmd).
 - **Precedence:** If you use Team Rules, remember order is **Team → Project → User** when guidance conflicts. See [Team Rules](https://cursor.com/docs/rules#team-rules).
 

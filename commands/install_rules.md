@@ -7,7 +7,7 @@ Install ai-toolkit Cursor rules into the **open project** at `.cursor/rules/ai-t
 2. **Run the install script** from the project (or with `--project`):
    - Prefer: `bash "${HOME}/.cursor/ai-toolkit/install-rules.sh" --filter auto`
    - If that path is missing, instruct the user to run `install.sh` from the ai-toolkit repo first.
-   - Use `--filter go` (or another stack from `rules/manifest.sh`) when the user asks for a specific language pack, or when `--filter auto` detects no stacks.
+   - Use `--filter go`, `--filter bruno`, or another stack from `rules/manifest.sh` when the user asks for a specific pack, or when `--filter auto` detects no stacks.
    - Use `--filter org` for org-wide rules only.
    - Use `--filter all` to install every stack defined in the manifest.
    - Use `--dry-run` first when the user wants to preview what would be installed.

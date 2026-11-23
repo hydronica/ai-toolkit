@@ -6,13 +6,19 @@
 
 ORG_RULES=(
   agent-behavior.mdc
+  drawio.mdc
 )
 
-STACK_NAMES=(go)
+STACK_NAMES=(go bruno)
 
 STACK_go_DETECT=(go.mod go.work)
 STACK_go_RULES=(
   go-standards.mdc
   go-testing.mdc
   go-project-structure.md
+)
+
+STACK_bruno_DETECT=(bruno bruno.json collection.bru)
+STACK_bruno_RULES=(
+  bruno.mdc
 )

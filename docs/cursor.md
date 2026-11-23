@@ -105,7 +105,8 @@ Or invoke the **`install_rules`** command in Agent chat ([`commands/install_rule
 
 Rules are installed to `<project>/.cursor/rules/ai-toolkit/`. Which files are included is controlled by [`rules/manifest.sh`](../rules/manifest.sh):
 
-- **STACK_NAMES** plus **STACK_\<name\>_DETECT** and **STACK_\<name\>_RULES** per language pack
+- **ORG_RULES** — always installed (for example `agent-behavior.mdc`, `drawio.mdc`)
+- **STACK_NAMES** plus **STACK_\<name\>_DETECT** and **STACK_\<name\>_RULES** per stack (for example Go, Bruno)
 
 Add new language packs by extending `manifest.sh` and adding rule files under `rules/`. User-level rules are pasted into **Settings → User Rules** — see [README — Suggested user rules](../README.md#suggested-user-rules).
 
