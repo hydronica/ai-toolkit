@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>db-query settings</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; color: #1d1d1f; background: #f5f5f7; }
+  header { padding: 16px 24px; background: #fff; border-bottom: 1px solid #d2d2d7; }
+  header h1 { font-size: 18px; margin: 0 0 4px; }
+  header p { margin: 0; color: #515154; font-size: 13px; }
+  main { display: grid; grid-template-columns: 240px 1fr; gap: 24px; padding: 24px; align-items: start; }
+  nav ul { list-style: none; padding: 0; margin: 0 0 12px; }
+  nav li { margin-bottom: 4px; }
+  nav li button { width: 100%; text-align: left; }
+  form { background: #fff; border: 1px solid #d2d2d7; border-radius: 8px; padding: 20px; display: grid; gap: 12px; max-width: 560px; }
+  label { display: grid; gap: 4px; font-size: 13px; }
+  input, select { font: inherit; padding: 6px 8px; border: 1px solid #b0b0b5; border-radius: 6px; }
+  label.checkbox { display: flex; align-items: center; gap: 8px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #8e8e93; background: #fff; cursor: pointer; }
+  button.primary { background: #0a64d8; color: #fff; border-color: #0a64d8; }
+  button.danger { color: #b00020; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #result { font-size: 14px; padding: 8px 12px; border-radius: 6px; display: none; }
+  #result.info { display: block; background: #e8f0fe; color: #174ea6; }
+  #result.ok { display: block; background: #e6f4ea; color: #137333; }
+  #result.fail { display: block; background: #fce8e6; color: #a50e0e; }
+</style>
+</head>
+<body>
+<header>
+  <h1>db-query database settings</h1>
+  <p>Saved passwords are never shown. Leave a password field blank to keep the saved value.</p>
+</header>
+<main>
+  <nav>
+    <ul id="list"></ul>
+    <button id="new" type="button">New database</button>
+  </nav>
+  <section>
+    <form id="form" autocomplete="off">
+      <label>Name
+        <input id="f-name" name="name" required>
+      </label>
+      <label>Type
+        <select id="f-type"></select>
+      </label>
+      <div id="fields" style="display: grid; gap: 12px;"></div>
+      <div class="actions">
+        <button id="test" type="button">Test connection</button>
+        <button id="save" type="submit" class="primary">Save</button>
+        <button id="delete" type="button" class="danger">Delete</button>
+      </div>
+      <div id="result" role="status"></div>
+    </form>
+  </section>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+
+const state = { types: {}, entries: [], selected: null };
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json", "X-DB-Query-Token": TOKEN },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+function setResult(kind, text) {
+  const box = document.getElementById("result");
+  box.className = kind || "";
+  box.textContent = text || "";
+}
+
+async function loadTypes() {
+  const r = await api("GET", "/api/types");
+  const sel = document.getElementById("f-type");
+  for (const t of r.data) {
+    state.types[t.type] = t;
+    sel.add(new Option(t.type, t.type));
+  }
+}
+
+async function loadList() {
+  const r = await api("GET", "/api/databases");
+  if (!r.ok) {
+    setResult("fail", r.data.error || "could not load databases");
+    return;
+  }
+  state.entries = r.data;
+  renderList();
+}
+
+function renderList() {
+  const ul = document.getElementById("list");
+  ul.replaceChildren();
+  for (const e of state.entries) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = e.name + " (" + e.type + ")";
+    btn.addEventListener("click", () => selectEntry(e.name));
+    li.append(btn);
+    ul.append(li);
+  }
+}
+
+function renderFields(type, values = {}, saved = []) {
+  const info = state.types[type];
+  const box = document.getElementById("fields");
+  box.replaceChildren();
+  for (const field of info.fields) {
+    if (field === "name") continue;
+    const row = document.createElement("label");
+    const input = document.createElement("input");
+    input.dataset.field = field;
+    if (info.bool.includes(field)) {
+      input.type = "checkbox";
+      input.checked = values[field] === true;
+      row.className = "checkbox";
+      const caption = document.createElement("span");
+      caption.textContent = field;
+      row.append(input, caption);
+    } else {
+      row.textContent = field;
+      if (info.secret.includes(field)) {
+        input.type = "password";
+        input.autocomplete = "new-password";
+        if (saved.includes(field)) {
+          input.placeholder = "Saved. Leave blank to keep";
+        }
+      } else {
+        input.type = "text";
+        if (values[field] !== undefined) {
+          input.value = values[field];
+        }
+      }
+      row.append(input);
+    }
+    box.append(row);
+  }
+}
+
+function payload() {
+  const values = { name: document.getElementById("f-name").value.trim() };
+  for (const input of document.querySelectorAll("#fields [data-field]")) {
+    values[input.dataset.field] = input.type === "checkbox" ? input.checked : input.value;
+  }
+  return {
+    original_name: state.selected || "",
+    type: document.getElementById("f-type").value,
+    values,
+  };
+}
+
+function fill(name, type, values, saved) {
+  document.getElementById("f-name").value = name;
+  document.getElementById("f-type").value = type;
+  renderFields(type, values, saved);
+  document.getElementById("delete").disabled = !state.selected;
+  setResult("", "");
+}
+
+function startNew() {
+  state.selected = null;
+  fill("", "postgres", {}, []);
+}
+
+function selectEntry(name) {
+  const e = state.entries.find((x) => x.name === name);
+  if (!e) return;
+  state.selected = name;
+  fill(e.name, e.type, e.values, e.saved_secrets);
+}
+
+document.getElementById("new").addEventListener("click", startNew);
+
+document.getElementById("f-type").addEventListener("change", (ev) => {
+  renderFields(ev.target.value);
+});
+
+document.getElementById("test").addEventListener("click", async () => {
+  setResult("info", "Testing connection...");
+  const r = await api("POST", "/api/test", payload());
+  if (r.data.ok) {
+    setResult("ok", r.data.message);
+  } else {
+    setResult("fail", r.data.error || "test failed");
+  }
+});
+
+document.getElementById("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const r = await api("POST", "/api/databases", payload());
+  if (!r.ok) {
+    setResult("fail", r.data.error || "save failed");
+    return;
+  }
+  state.selected = r.data.name;
+  await loadList();
+  selectEntry(r.data.name);
+  setResult("ok", "Saved " + r.data.name + ".");
+});
+
+document.getElementById("delete").addEventListener("click", async () => {
+  if (!state.selected || !confirm("Delete " + state.selected + "?")) return;
+  const r = await api("DELETE", "/api/databases/" + encodeURIComponent(state.selected));
+  if (!r.ok) {
+    setResult("fail", r.data.error || "delete failed");
+    return;
+  }
+  const deleted = state.selected;
+  startNew();
+  await loadList();
+  setResult("ok", "Deleted " + deleted + ".");
+});
+
+(async function init() {
+  await loadTypes();
+  await loadList();
+  startNew();
+})();
+</script>
+</body>
+</html>

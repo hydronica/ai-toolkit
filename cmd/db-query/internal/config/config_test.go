@@ -9,7 +9,7 @@ import (
 
 func TestConfig_Validate(t *testing.T) {
 	fn := func(cfg Config) (Database, error) {
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.CheckDatabases(); err != nil {
 			return nil, err
 		}
 		if len(cfg.Databases) == 1 {
@@ -178,7 +178,7 @@ type findInput struct {
 
 func TestConfig_Find(t *testing.T) {
 	fn := func(in findInput) (string, error) {
-		if err := in.cfg.Validate(); err != nil {
+		if err := in.cfg.CheckDatabases(); err != nil {
 			return "", err
 		}
 		got, err := in.cfg.Find(in.name)

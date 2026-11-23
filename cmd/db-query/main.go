@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/config"
 	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/db"
+	"github.com/hydronica/ai-toolkit/cmd/db-query/internal/webui"
 )
 
 var version = "dev"
@@ -30,6 +32,19 @@ func main() {
 		Version(version).
 		Description("Run read-only queries against configured databases.").
 		Load(); err != nil {
+		exitErr(err)
+	}
+
+	if cfg.UI {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := webui.Serve(ctx, config.DefaultPath(), os.Stderr); err != nil {
+			exitErr(err)
+		}
+		return
+	}
+
+	if err := cfg.CheckDatabases(); err != nil {
 		exitErr(err)
 	}
 

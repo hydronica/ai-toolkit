@@ -21,6 +21,7 @@ type Config struct {
 	ListSchema      bool          `flag:"list-schema" comment:"List tables, views, or collections and their columns, then exit"`
 	ListCollections bool          `flag:"list-collections" comment:"Deprecated alias of -list-schema"`
 	MCP             bool          `flag:"mcp" comment:"Start MCP stdio server"`
+	UI              bool          `flag:"ui" comment:"Serve the local database settings page on 127.0.0.1"`
 
 	Databases DatabaseList `toml:"databases" flag:"-"`
 }
@@ -34,7 +35,10 @@ func DefaultPath() string {
 	return path
 }
 
-func (c *Config) Validate() error {
+// CheckDatabases validates every configured database. It is not named Validate
+// because go-config would run it during Load, which blocks the settings UI from
+// opening a config that needs fixing.
+func (c *Config) CheckDatabases() error {
 	if len(c.Databases) == 0 {
 		return errors.New("config must define at least one [[databases]] entry")
 	}
